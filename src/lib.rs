@@ -13,12 +13,14 @@ pub fn parse_map(src: String) -> Option<HashMap<String, String>> {
     Some(map)
 }
 
-pub fn lookup(key: String, map: &HashMap<String, String>) -> Option<String> {
-    let mut key = key.chars();
-    assert_eq!('/', key.next().unwrap());
-    match map.get(key.as_str()) {
-        Some(val) => Some(format!("https://{}", val)),
-        None => None,
+pub fn lookup_factory(map: HashMap<String, String>) -> impl Fn(&str) -> Option<String> {
+    move |key| {
+        let mut key = key.chars();
+        assert_eq!('/', key.next().unwrap());
+        match map.get(key.as_str()) {
+            Some(val) => Some(format!("https://{}", val)),
+            None => None,
+        }
     }
 }
 
@@ -44,21 +46,24 @@ tokio-guide     tokio.rs/tokio/tutorial
 actix-docs      actix.rs/docs/
 
 "#;
-        let map = parse_map(example_config.to_string()).unwrap();
+
+        let config = parse_map(example_config.to_string()).unwrap();
         assert_eq!(
-            map.get("rust"),
+            config.get("rust"),
             Some(&"www.rust-lang.org/".to_string())
         );
         assert_eq!(
-            map.get("rust-by-example"),
+            config.get("rust-by-example"),
             Some(&"doc.rust-lang.org/rust-by-example/".to_string())
         );
+
+        let lookup = lookup_factory(config);
         assert_eq!(
-            lookup("/crates".to_string(), &map),
+            lookup("/crates"),
             Some("https://crates.io/".to_string())
         );
         assert_eq!(
-            lookup("/trpl-cn".to_string(), &map),
+            lookup("/trpl-cn"),
             Some("https://kaisery.github.io/trpl-zh-cn/".to_string())
         );
     }

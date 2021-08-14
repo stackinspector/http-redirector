@@ -1,7 +1,7 @@
 use structopt::StructOpt;
 use reqwest::blocking::get;
 use tiny_http::{Header, Response, Server};
-use http_redirector::parse_map;
+use http_redirector::{parse_map, lookup_factory};
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "http-redirector")]
@@ -16,19 +16,12 @@ fn main() {
     let args = Args::from_args();
     let config = get(args.config).unwrap().text().unwrap();
     let config = parse_map(config).unwrap();
-    println!("port = {}", args.port);
-    for (key, val) in config {
-        println!("{} => {}", key, val);
-    }
+    let lookup = lookup_factory(config);
     let server = Server::http(format!("0.0.0.0:{}", args.port)).unwrap();
-    
+
     for request in server.incoming_requests() {
-        let header: Header = format!(
-            "Location: https://cn.bing.com/search?ensearch=1&q={}",
-            request.url()
-        )
-        .parse::<Header>()
-        .unwrap();
+        let result = lookup(request.url()).unwrap();
+        let header = format!("Location: {}", result).parse::<Header>().unwrap();
         let response = Response::empty(301).with_header(header);
         request.respond(response).unwrap();
     }
