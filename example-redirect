@@ -1,0 +1,13 @@
+rust            www.rust-lang.org/
+crates          crates.io/
+docgen          docs.rs/
+rust-github     github.com/rust-lang/
+
+trpl            doc.rust-lang.org/stable/book/
+trpl-cn         kaisery.github.io/trpl-zh-cn/
+rust-cookbook   rust-lang-nursery.github.io/rust-cookbook/
+rust-by-example doc.rust-lang.org/rust-by-example/
+cargo-book      doc.rust-lang.org/cargo/
+
+tokio-guide     tokio.rs/tokio/tutorial
+actix-docs      actix.rs/docs/
