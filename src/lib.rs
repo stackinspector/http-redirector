@@ -15,8 +15,8 @@ pub fn init(config: String) -> Option<impl Fn(&str) -> Option<String>> {
         let mut key = key.chars();
         assert_eq!('/', key.next().unwrap());
         match map.get(key.as_str()) {
-            Some(val) => Some(format!("https://{}", val)),
             None => None,
+            Some(val) => Some(format!("https://{}", val)),
         }
     })
 }

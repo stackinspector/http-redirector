@@ -19,9 +19,11 @@ fn main() {
     let server = Server::http(format!("0.0.0.0:{}", args.port)).unwrap();
 
     for request in server.incoming_requests() {
-        let result = lookup(request.url()).unwrap();
-        let header = format!("Location: {}", result).parse::<Header>().unwrap();
-        let response = Response::empty(301).with_header(header);
+        let response = match lookup(request.url()) {
+            None => Response::empty(404),
+            Some(result) => Response::empty(301)
+                .with_header(format!("Location: {}", result).parse::<Header>().unwrap()),
+        };
         request.respond(response).unwrap();
     }
 }
