@@ -8,6 +8,7 @@ pub fn init(config: String) -> Option<impl Fn(&str) -> Option<String>> {
         let mut splited = re.split(line);
         let key = splited.next()?.to_string();
         let val = splited.next()?.to_string();
+        assert_eq!(splited.next(), None);
         map.insert(key, val);
     }
     let map = map;
