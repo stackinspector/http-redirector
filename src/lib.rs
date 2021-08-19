@@ -11,13 +11,12 @@ pub fn init(config: String) -> Option<HashMap<String, String>> {
         assert_eq!(splited.next(), None);
         map.insert(key, val);
     }
-    let map = map;
     Some(map)
 }
 
 pub fn lookup(key: &str, map: &HashMap<String, String>) -> Option<String> {
     let mut key = key.chars();
-    assert_eq!('/', key.next().unwrap());
+    assert_eq!(Some('/'), key.next());
     match map.get(key.as_str()) {
         None => None,
         Some(val) => Some(format!("https://{}", val)),
