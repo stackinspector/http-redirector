@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use regex::Regex;
 
-pub fn init(config: String) -> Option<impl Fn(&str) -> Option<String>> {
+pub fn init(config: String) -> Option<HashMap<String, String>> {
     let mut map = HashMap::new();
     let re = Regex::new("\\s+").unwrap();
     for line in config.split("\n").filter(|line| *line != "") {
@@ -12,14 +12,16 @@ pub fn init(config: String) -> Option<impl Fn(&str) -> Option<String>> {
         map.insert(key, val);
     }
     let map = map;
-    Some(move |key: &str| {
-        let mut key = key.chars();
-        assert_eq!('/', key.next().unwrap());
-        match map.get(key.as_str()) {
-            None => None,
-            Some(val) => Some(format!("https://{}", val)),
-        }
-    })
+    Some(map)
+}
+
+pub fn lookup(key: &str, map: &HashMap<String, String>) -> Option<String> {
+    let mut key = key.chars();
+    assert_eq!('/', key.next().unwrap());
+    match map.get(key.as_str()) {
+        None => None,
+        Some(val) => Some(format!("https://{}", val)),
+    }
 }
 
 #[cfg(test)]
@@ -34,13 +36,13 @@ rust    www.rust-lang.org/
 trpl    doc.rust-lang.org/stable/book/
 trpl-cn kaisery.github.io/trpl-zh-cn/
 "#;
-        let lookup = init(example_config.to_string()).unwrap();
+        let map = init(example_config.to_string()).unwrap();
         assert_eq!(
-            lookup("/rust"),
+            lookup("/rust", &map),
             Some("https://www.rust-lang.org/".to_string())
         );
         assert_eq!(
-            lookup("/trpl-cn"),
+            lookup("/trpl-cn", &map),
             Some("https://kaisery.github.io/trpl-zh-cn/".to_string())
         );
     }
