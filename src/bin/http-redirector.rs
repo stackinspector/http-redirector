@@ -1,6 +1,6 @@
 use std::{sync::Arc, thread::spawn};
 use structopt::StructOpt;
-use reqwest::blocking::get;
+use ureq::get;
 use tiny_http::{Header, Response, Server};
 use http_redirector::{init, lookup};
 
@@ -15,7 +15,7 @@ struct Args {
 
 fn main() {
     let args = Args::from_args();
-    let config = get(args.config).unwrap().text().unwrap();
+    let config = get(args.config.as_str()).call().unwrap().into_string().unwrap();
     let map = Arc::new(init(config).unwrap());
     let server = Server::http(format!("0.0.0.0:{}", args.port)).unwrap();
 
@@ -25,7 +25,7 @@ fn main() {
             let response = match lookup(request.url(), &map_local) {
                 None => Response::empty(404),
                 Some(result) => Response::empty(301)
-                    .with_header(format!("Location: {}", result).parse::<Header>().unwrap()),
+                    .with_header(Header::from_bytes(&b"Location"[..], &result.as_bytes()[..]).unwrap()),
             };
             request.respond(response).unwrap();
         });

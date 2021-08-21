@@ -10,5 +10,5 @@ name = "http_redirector"
 regex = "1.5.4"
 # below dependencies are bin only
 structopt = "0.3.22"
-reqwest = { version = "0.11.4", default-features = false, features = ["blocking", "rustls-tls"] }
+ureq = "2.1.1"
 tiny_http = { version = "0.8.2", features = ["default"] }
