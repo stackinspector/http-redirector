@@ -8,7 +8,10 @@ pub fn init(config: String) -> Option<HashMap<String, String>> {
         let mut splited = re.split(line);
         let key = splited.next()?.to_string();
         let val = splited.next()?.to_string();
-        assert_eq!(splited.next(), None);
+        match splited.next() {
+            None => (),
+            Some(_) => return None,
+        };
         map.insert(key, val);
     }
     Some(map)
@@ -16,7 +19,10 @@ pub fn init(config: String) -> Option<HashMap<String, String>> {
 
 pub fn lookup(key: &str, map: &HashMap<String, String>) -> Option<String> {
     let mut key = key.chars();
-    assert_eq!(Some('/'), key.next());
+    match key.next() {
+        Some('/') => (),
+        _ => return None,
+    };
     match map.get(key.as_str()) {
         None => None,
         Some(val) => Some(format!("https://{}", val)),
@@ -27,15 +33,17 @@ pub fn lookup(key: &str, map: &HashMap<String, String>) -> Option<String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test() {
-        let example_config = r#"
+    const EXAMPLE_CONFIG: &str = r#"
 rust    www.rust-lang.org/
 
 trpl    doc.rust-lang.org/stable/book/
 trpl-cn kaisery.github.io/trpl-zh-cn/
 "#;
-        let map = init(example_config.to_string()).unwrap();
+
+    #[test]
+    fn happypath() {
+        let config = EXAMPLE_CONFIG.to_string();
+        let map = init(config).unwrap();
         assert_eq!(
             lookup("/rust", &map),
             Some("https://www.rust-lang.org/".to_string())
@@ -44,5 +52,24 @@ trpl-cn kaisery.github.io/trpl-zh-cn/
             lookup("/trpl-cn", &map),
             Some("https://kaisery.github.io/trpl-zh-cn/".to_string())
         );
+    }
+
+    #[test]
+    fn config_redundant_value() {
+        let config = "key val redundance\nkey val".to_string();
+        assert_eq!(init(config), None);
+    }
+
+    #[test]
+    fn config_lack_value() {
+        let config = "key val\nkey".to_string();
+        assert_eq!(init(config), None);
+    }
+
+    #[test]
+    fn path_no_prefix() {
+        let config = EXAMPLE_CONFIG.to_string();
+        let map = init(config).unwrap();
+        assert_eq!(lookup("rust", &map), None);
     }
 }
