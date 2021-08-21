@@ -1,14 +1,14 @@
 [package]
 name = "http-redirector"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2018"
 
 [lib]
 name = "http_redirector"
 
 [dependencies]
-regex = "1.5.4"
+regex = "1.5"
 # below dependencies are bin only
-structopt = "0.3.22"
-ureq = "2.1.1"
-tiny_http = { version = "0.8.2", features = ["default"] }
+structopt = "0.3"
+ureq = "2.1"
+tiny_http = { version = "0.8", features = ["default"] }
