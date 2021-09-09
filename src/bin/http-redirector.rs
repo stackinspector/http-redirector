@@ -15,13 +15,13 @@ struct Args {
 }
 
 async fn handler(req: Request<Body>, map: Arc<Map>) -> Result<Response<Body>, Infallible> {
-    Ok(match *req.method() {
+    Ok((match *req.method() {
         Method::GET | Method::HEAD => match lookup(req.uri().path(), &map) {
-            None => Response::builder().status(404).body(Body::empty()).unwrap(),
-            Some(result) => Response::builder().status(307).header("Location", result).body(Body::empty()).unwrap(),
+            None => Response::builder().status(404).body(Body::empty()),
+            Some(result) => Response::builder().status(307).header("Location", result).body(Body::empty()),
         },
-        _ => Response::builder().status(400).body(Body::empty()).unwrap(),
-    })
+        _ => Response::builder().status(400).body(Body::empty()),
+    }).unwrap())
 }
 
 #[tokio::main]
@@ -29,7 +29,6 @@ async fn main() {
     let args = Args::from_args();
     let config = http_get(args.config).await.unwrap().text().await.unwrap();
     let map = Arc::new(init(config).unwrap());
-
     let service = make_service_fn(move |_conn| {
         let map_local = map.clone();
         async move { Ok::<_, Infallible>(service_fn(move |req| handler(req, map_local.clone()))) }
