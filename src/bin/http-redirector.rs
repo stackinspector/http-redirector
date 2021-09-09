@@ -21,20 +21,21 @@ async fn handler(req: Request<Body>, map: Arc<Map>) -> Result<Response<Body>, In
             Some(result) => Response::builder().status(307).header("Location", result).body(Body::empty()),
         },
         _ => Response::builder().status(400).body(Body::empty()),
-    }).unwrap())
+    }).expect("constructing response error"))
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::from_args();
-    let config = http_get(args.config).await.unwrap();
-    assert_eq!(config.status(), 200);
-    let config = config.text().await.unwrap();
-    let map = Arc::new(init(config).unwrap());
+    let map = Arc::new(init({
+        let req = http_get(args.config).await.expect("fetching config failed");
+        if req.status() != 200 { panic!("fetching config failed: response status code is not 200") };
+        req.text().await.expect("reading config failed")
+    }).expect("parsing config failed"));
     let service = make_service_fn(move |_conn| {
         let map_local = map.clone();
         async move { Ok::<_, Infallible>(service_fn(move |req| handler(req, map_local.clone()))) }
     });
     let server = Server::bind(&SocketAddr::from(([127, 0, 0, 1], args.port))).serve(service);
-    server.await.unwrap();
+    server.await.expect("server error");
 }
