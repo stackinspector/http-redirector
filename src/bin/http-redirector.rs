@@ -27,7 +27,9 @@ async fn handler(req: Request<Body>, map: Arc<Map>) -> Result<Response<Body>, In
 #[tokio::main]
 async fn main() {
     let args = Args::from_args();
-    let config = http_get(args.config).await.unwrap().text().await.unwrap();
+    let config = http_get(args.config).await.unwrap();
+    assert_eq!(config.status(), 200);
+    let config = config.text().await.unwrap();
     let map = Arc::new(init(config).unwrap());
     let service = make_service_fn(move |_conn| {
         let map_local = map.clone();
