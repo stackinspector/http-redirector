@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use regex::Regex;
 
-pub fn init(config: String) -> Option<HashMap<String, String>> {
+pub type Map = HashMap<String, String>;
+
+pub fn init(config: String) -> Option<Map> {
     let mut map = HashMap::new();
     let re = Regex::new("\\s+").unwrap();
     for line in config.split("\n").filter(|line| *line != "") {
@@ -17,7 +19,7 @@ pub fn init(config: String) -> Option<HashMap<String, String>> {
     Some(map)
 }
 
-pub fn lookup(key: &str, map: &HashMap<String, String>) -> Option<String> {
+pub fn lookup(key: &str, map: &Map) -> Option<String> {
     let mut key = key.chars();
     match key.next() {
         Some('/') => (),

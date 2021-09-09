@@ -1,8 +1,9 @@
-use std::{sync::Arc, thread::spawn};
+use std::{sync::Arc, convert::Infallible, net::SocketAddr};
 use structopt::StructOpt;
-use ureq::get;
-use tiny_http::{Header, Response, Server};
-use http_redirector::{init, lookup};
+use reqwest::{get as http_get};
+use hyper::{Method, Body, Request, Response, Server};
+use hyper::service::{make_service_fn, service_fn};
+use http_redirector::{Map, init, lookup};
 
 #[derive(StructOpt)]
 #[structopt(name = "http-redirector")]
@@ -13,21 +14,26 @@ struct Args {
     config: String,
 }
 
-fn main() {
-    let args = Args::from_args();
-    let config = get(args.config.as_str()).call().unwrap().into_string().unwrap();
-    let map = Arc::new(init(config).unwrap());
-    let server = Server::http(format!("0.0.0.0:{}", args.port)).unwrap();
+async fn handler(req: Request<Body>, map: Arc<Map>) -> Result<Response<Body>, Infallible> {
+    Ok(match *req.method() {
+        Method::GET | Method::HEAD => match lookup(req.uri().path(), &map) {
+            None => Response::builder().status(404).body(Body::empty()).unwrap(),
+            Some(result) => Response::builder().status(307).header("Location", result).body(Body::empty()).unwrap(),
+        },
+        _ => Response::builder().status(400).body(Body::empty()).unwrap(),
+    })
+}
 
-    for request in server.incoming_requests() {
+#[tokio::main]
+async fn main() {
+    let args = Args::from_args();
+    let config = http_get(args.config).await.unwrap().text().await.unwrap();
+    let map = Arc::new(init(config).unwrap());
+
+    let service = make_service_fn(move |_conn| {
         let map_local = map.clone();
-        spawn(move || {
-            let response = match lookup(request.url(), &map_local) {
-                None => Response::empty(404),
-                Some(result) => Response::empty(301)
-                    .with_header(Header::from_bytes(&b"Location"[..], &result.as_bytes()[..]).unwrap()),
-            };
-            request.respond(response).unwrap();
-        });
-    }
+        async move { Ok::<_, Infallible>(service_fn(move |req| handler(req, map_local.clone()))) }
+    });
+    let server = Server::bind(&SocketAddr::from(([127, 0, 0, 1], args.port))).serve(service);
+    server.await.unwrap();
 }
