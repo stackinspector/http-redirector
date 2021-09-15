@@ -1,6 +1,6 @@
 use std::{sync::Arc, convert::Infallible, net::SocketAddr};
 use structopt::StructOpt;
-use reqwest::{get as http_get};
+use reqwest::get as http_get;
 use hyper::{Method, Body, Request, Response, Server};
 use hyper::service::{make_service_fn, service_fn};
 use http_redirector::{Map, init, lookup};
@@ -12,6 +12,14 @@ struct Args {
     port: u16,
     #[structopt(short = "c", long)]
     config: String,
+}
+
+#[tokio::main]
+async fn get_map(url: String) -> Map {
+    let req = http_get(url).await.expect("fetching config failed");
+    if req.status() != 200 { panic!("fetching config failed: response status code is not 200") };
+    let text = req.text().await.expect("reading config failed");
+    init(text).expect("parsing config failed")
 }
 
 async fn handler(req: Request<Body>, map: Arc<Map>) -> Result<Response<Body>, Infallible> {
@@ -27,12 +35,8 @@ async fn handler(req: Request<Body>, map: Arc<Map>) -> Result<Response<Body>, In
 #[tokio::main]
 async fn main() {
     let args = Args::from_args();
-    let map = Arc::new(init({
-        let req = http_get(args.config).await.expect("fetching config failed");
-        if req.status() != 200 { panic!("fetching config failed: response status code is not 200") };
-        req.text().await.expect("reading config failed")
-    }).expect("parsing config failed"));
-    let service = make_service_fn(move |_conn| {
+    let map = Arc::new(get_map(args.config));
+    let service = make_service_fn(move |_| {
         let map_local = map.clone();
         async move { Ok::<_, Infallible>(service_fn(move |req| handler(req, map_local.clone()))) }
     });
