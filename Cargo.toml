@@ -1,6 +1,6 @@
 [package]
 name = "http-redirector"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2018"
 
 [lib]
@@ -12,4 +12,4 @@ regex = "1.5"
 structopt = "0.3"
 tokio = { version = "1.11", features = ["full"] }
 hyper = { version = "0.14", features = ["server"] }
-reqwest = { version = "0.11.4", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
