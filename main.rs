@@ -1,5 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
-use http_redirector::{get, init, handle_lookup};
+use http_redirector::{get, init, handle};
 use structopt::StructOpt;
 use warp::Filter;
 
@@ -10,23 +10,34 @@ struct Args {
     port: u16,
     #[structopt(short = "c", long = "config")]
     url: String,
+    #[structopt(short = "s", long)]
+    stat_path: String,
 }
 
 #[tokio::main]
 async fn main() {
-    let Args { port, url } = Args::from_args();
+    let Args { port, url, stat_path } = Args::from_args();
 
-    let state = Arc::new({
-        let mut map = HashMap::new();
-        init(get(url.as_str()).await.unwrap(), &mut map).unwrap();
-        map
+    let map = Arc::new({
+        let mut _map = HashMap::new();
+        init(get(url.as_str()).await.unwrap(), &mut _map).unwrap();
+        _map
     });
-    let state_filter = warp::any().map(move || state.clone());
+    let map_filter = warp::any().map(move || map.clone());
+
+    let storage = Arc::new({
+        let db = sled::open(stat_path).unwrap();
+        db.open_tree(url).unwrap()
+    });
+    let storage_filter = warp::any().map(move || storage.clone());
 
     warp::serve(
         warp::path::param::<String>()
             .and(warp::get())
-            .and(state_filter.clone())
-            .and_then(handle_lookup)
+            .and(warp::addr::remote())
+            .and(warp::header::optional::<String>("X-Raw-IP"))
+            .and(map_filter.clone())
+            .and(storage_filter.clone())
+            .and_then(handle)
     ).run(([127, 0, 0, 1], port)).await;
 }

@@ -13,7 +13,7 @@ name = "http_redirector"
 path = "lib.rs"
 
 [[bin]]
-name = "http-redirector"
+name = "hr"
 path = "main.rs"
 
 [dependencies]
@@ -23,3 +23,7 @@ structopt = "0.3"
 tokio = { version = "1.11", features = ["full"] }
 warp = "0.3"
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
+sled = "0.34.7"
+chrono = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
