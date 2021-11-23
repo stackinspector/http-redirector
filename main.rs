@@ -1,5 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
-use http_redirector::{get, init, handle};
+use http_redirector::{get, init, open_storage, handle};
 use structopt::StructOpt;
 use warp::Filter;
 
@@ -25,10 +25,7 @@ async fn main() {
     });
     let map_filter = warp::any().map(move || map.clone());
 
-    let storage = Arc::new({
-        let db = sled::open(stat_path).unwrap();
-        db.open_tree(url).unwrap()
-    });
+    let storage = Arc::new(open_storage(stat_path, url));
     let storage_filter = warp::any().map(move || storage.clone());
 
     warp::serve(
