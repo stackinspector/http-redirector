@@ -10,13 +10,13 @@ struct Args {
     port: u16,
     #[structopt(short = "c", long = "config")]
     url: String,
-    #[structopt(short = "s", long)]
-    stat_path: String,
+    #[structopt(short = "l", long)]
+    log_path: String,
 }
 
 #[tokio::main]
 async fn main() {
-    let Args { port, url, stat_path } = Args::from_args();
+    let Args { port, url, log_path } = Args::from_args();
 
     let map = Arc::new({
         let mut _map = HashMap::new();
@@ -25,7 +25,7 @@ async fn main() {
     });
     let map_filter = warp::any().map(move || map.clone());
 
-    let storage = Arc::new(open_storage(stat_path, url));
+    let storage = Arc::new(open_storage(log_path, url));
     let storage_filter = warp::any().map(move || storage.clone());
 
     warp::serve(

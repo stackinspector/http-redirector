@@ -97,11 +97,11 @@ trpl-cn kaisery.github.io/trpl-zh-cn/
         let map = wrapped_init(config).unwrap();
         assert_eq!(
             map.get("/rust"),
-            Some("www.rust-lang.org/".to_owned())
+            Some(&"www.rust-lang.org/".to_owned())
         );
         assert_eq!(
             map.get("/trpl-cn"),
-            Some("kaisery.github.io/trpl-zh-cn/".to_owned())
+            Some(&"kaisery.github.io/trpl-zh-cn/".to_owned())
         );
     }
 
