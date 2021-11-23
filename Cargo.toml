@@ -1,15 +1,25 @@
 [package]
 name = "http-redirector"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2018"
+authors = ["stackinspector"]
+license = "Apache-2.0"
+repository = "https://github.com/stackinspector/http-redirector"
+description = "A simple http redirection service based on an input key-link table."
+readme = "README.md"
 
 [lib]
 name = "http_redirector"
+path = "lib.rs"
+
+[[bin]]
+name = "http-redirector"
+path = "main.rs"
 
 [dependencies]
 regex = "1.5"
 # below dependencies are bin only
 structopt = "0.3"
 tokio = { version = "1.11", features = ["full"] }
-hyper = { version = "0.14", features = ["server"] }
+warp = "0.3"
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls"] }
