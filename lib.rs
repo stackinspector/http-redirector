@@ -31,7 +31,12 @@ pub fn init(config: String, map: &mut Map) -> Option<()> {
     for line in config.split("\n").filter(|line| line.len() != 0) {
         let mut splited = re.split(line);
         let key = splited.next()?.to_string();
-        let val = splited.next()?.to_string();
+        let val = splited.next()?;
+        let val = if val.starts_with("http://") {
+            val.to_owned()
+        } else {
+            format!("https://{}", val)
+        };
         if let Some(_) = splited.next() { return None };
         map.insert(key, val);
     }
@@ -70,7 +75,7 @@ pub async fn handle(
     }
     Ok(match result {
         None => Response::builder().status(404).body(Body::empty()).unwrap(),
-        Some(val) => Response::builder().status(307).header("Location", format!("https://{}", val)).body(Body::empty()).unwrap(),
+        Some(val) => Response::builder().status(307).header("Location", val).body(Body::empty()).unwrap(),
     })
 }
 
