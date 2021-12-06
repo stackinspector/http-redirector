@@ -1,7 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
-use http_redirector::{get, init, open_storage, handle};
+use tokio::{spawn, signal, sync::oneshot};
 use structopt::StructOpt;
 use warp::Filter;
+use http_redirector::{get, init, open_storage, handle};
 
 #[derive(StructOpt)]
 #[structopt(about = concat!(env!("CARGO_PKG_DESCRIPTION"), "\nsee https://github.com/stackinspector/http-redirector"))]
@@ -28,13 +29,23 @@ async fn main() {
     let storage = Arc::new(open_storage(log_path, url));
     let storage_filter = warp::any().map(move || storage.clone());
 
-    warp::serve(
-        warp::path::param::<String>()
-            .and(warp::get())
-            .and(warp::addr::remote())
-            .and(warp::header::optional::<String>("X-Raw-IP"))
-            .and(map_filter.clone())
-            .and(storage_filter.clone())
-            .and_then(handle)
-    ).run(([127, 0, 0, 1], port)).await;
+    let (tx, rx) = oneshot::channel();
+
+    let route = warp::path::param::<String>()
+        .and(warp::get())
+        .and(warp::addr::remote())
+        .and(warp::header::optional::<String>("X-Raw-IP"))
+        .and(map_filter.clone())
+        .and(storage_filter.clone())
+        .and_then(handle);
+
+    let (_addr, server) = warp::serve(route).bind_with_graceful_shutdown(
+        ([127, 0, 0, 1], port),
+        async { rx.await.ok(); }
+    );
+
+    spawn(server);
+
+    signal::ctrl_c().await.unwrap();
+    tx.send(()).unwrap();
 }
