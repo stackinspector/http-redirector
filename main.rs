@@ -21,7 +21,8 @@ async fn main() {
 
     let map = Arc::new({
         let mut _map = HashMap::new();
-        init(get(url.as_str()).await.unwrap(), &mut _map).unwrap();
+        let config = get(url.as_str()).await.unwrap();
+        init(config, &mut _map).unwrap();
         _map
     });
     let map_filter = warp::any().map(move || map.clone());
@@ -41,7 +42,7 @@ async fn main() {
 
     let (_addr, server) = warp::serve(route).bind_with_graceful_shutdown(
         ([127, 0, 0, 1], port),
-        async { rx.await.ok(); }
+        async { rx.await.unwrap(); }
     );
 
     spawn(server);

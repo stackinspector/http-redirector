@@ -20,15 +20,21 @@ pub struct Record {
 }
 
 pub async fn get(url: &str) -> Option<String> {
-    let req = reqwest::get(url).await.ok()?;
-    if req.status() != 200 { return None };
-    Some(req.text().await.ok()?)
+    if url.starts_with("http") {
+        let resp = reqwest::get(url).await.ok()?;
+        match resp.status().as_u16() {
+            200 => resp.text().await.ok(),
+            _ => None,
+        }
+    } else {
+        tokio::fs::read_to_string(url).await.ok()
+    }
 }
 
 pub fn init(config: String, map: &mut Map) -> Option<()> {
     // map.clear();
     let re = Regex::new("\\s+").unwrap();
-    for line in config.split("\n").filter(|line| line.len() != 0) {
+    for line in config.lines().filter(|line| line.len() != 0) {
         let mut splited = re.split(line);
         let key = splited.next()?.to_string();
         let val = splited.next()?;
