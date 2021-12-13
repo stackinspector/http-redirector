@@ -1,7 +1,7 @@
 [package]
 name = "http-redirector"
 version = "0.4.1"
-edition = "2018"
+edition = "2021"
 authors = ["stackinspector"]
 license = "Apache-2.0"
 repository = "https://github.com/stackinspector/http-redirector"
