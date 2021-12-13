@@ -22,7 +22,7 @@ async fn main() {
     let map = Arc::new({
         let mut _map = HashMap::new();
         let config = get(url.as_str()).await.unwrap();
-        init(config, &mut _map).unwrap();
+        init(config.as_str(), &mut _map).unwrap();
         _map
     });
     let map_filter = warp::any().map(move || map.clone());

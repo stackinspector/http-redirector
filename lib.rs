@@ -31,12 +31,12 @@ pub async fn get(url: &str) -> Option<String> {
     }
 }
 
-pub fn init(config: String, map: &mut Map) -> Option<()> {
+pub fn init(config: &str, map: &mut Map) -> Option<()> {
     // map.clear();
     let re = Regex::new("\\s+").unwrap();
     for line in config.lines().filter(|line| line.len() != 0) {
         let mut splited = re.split(line);
-        let key = splited.next()?.to_string();
+        let key = splited.next()?.to_owned();
         let val = splited.next()?;
         let val = if val.starts_with("http://") {
             val.to_owned()
@@ -96,7 +96,7 @@ trpl    doc.rust-lang.org/stable/book/
 trpl-cn kaisery.github.io/trpl-zh-cn/
 "#;
 
-    fn wrapped_init(config: String) -> Option<Map> {
+    fn wrapped_init(config: &str) -> Option<Map> {
         let mut map = HashMap::new();
         init(config, &mut map)?;
         Some(map)
@@ -104,33 +104,33 @@ trpl-cn kaisery.github.io/trpl-zh-cn/
 
     #[test]
     fn happypath() {
-        let config = EXAMPLE_CONFIG.to_owned();
+        let config = EXAMPLE_CONFIG;
         let map = wrapped_init(config).unwrap();
         assert_eq!(
             map.get("/rust"),
-            Some(&"www.rust-lang.org/".to_owned())
+            Some("www.rust-lang.org/")
         );
         assert_eq!(
             map.get("/trpl-cn"),
-            Some(&"kaisery.github.io/trpl-zh-cn/".to_owned())
+            Some("kaisery.github.io/trpl-zh-cn/")
         );
     }
 
     #[test]
     fn config_redundant_value() {
-        let config = "key val redundance\nkey val".to_owned();
+        let config = "key val redundance\nkey val";
         assert_eq!(wrapped_init(config), None);
     }
 
     #[test]
     fn config_lack_value() {
-        let config = "key val\nkey".to_owned();
+        let config = "key val\nkey";
         assert_eq!(wrapped_init(config), None);
     }
 
     #[test]
     fn path_no_prefix() {
-        let config = EXAMPLE_CONFIG.to_owned();
+        let config = EXAMPLE_CONFIG;
         let map = wrapped_init(config).unwrap();
         assert_eq!(map.get("rust"), None);
     }
