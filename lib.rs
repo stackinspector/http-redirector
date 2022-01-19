@@ -1,11 +1,10 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, net::SocketAddr};
 use warp::{http::Response, hyper::Body};
 use regex::Regex;
-// use sled::{Tree, Config};
+use sled::{Tree, Config};
 
 type Map = HashMap<String, String>;
 
-/*
 #[derive(serde::Serialize)]
 pub struct Init {
     pub time: i64,
@@ -19,7 +18,6 @@ pub struct Record {
     pub raw_ip: Option<String>,
     pub x_raw_ip: Option<String>,
 }
-*/
 
 pub async fn get(url: &str) -> Option<String> {
     if url.starts_with("http") {
@@ -51,7 +49,6 @@ pub fn init(config: &str, map: &mut Map) -> Option<()> {
     Some(())
 }
 
-/*
 pub fn time() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
@@ -64,13 +61,11 @@ pub fn open_storage(path: String, url: String) -> Tree {
     };
     db.open_tree(serde_json::to_string(&init).unwrap().as_str()).unwrap()
 }
-*/
 
 pub async fn handle(
-    key: String, map: Arc<Map>, // raw_ip: Option<SocketAddr>, x_raw_ip: Option<String>, storage: Arc<Tree>
+    key: String, raw_ip: Option<SocketAddr>, x_raw_ip: Option<String>, map: Arc<Map>, storage: Arc<Tree>
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let result = map.get(&key);
-    /*
     if let Some(_) = result {
         let time = time();
         let record = Record {
@@ -84,7 +79,6 @@ pub async fn handle(
             serde_json::to_string(&record).unwrap().as_str()
         ).unwrap();
     }
-    */
     Ok(match result {
         None => Response::builder().status(404).body(Body::empty()).unwrap(),
         Some(val) => Response::builder().status(307).header("Location", val).body(Body::empty()).unwrap(),
@@ -114,11 +108,11 @@ trpl-cn kaisery.github.io/trpl-zh-cn/
         let map = wrapped_init(config).unwrap();
         assert_eq!(
             map.get("/rust"),
-            Some(&"www.rust-lang.org/".to_owned())
+            Some("www.rust-lang.org/")
         );
         assert_eq!(
             map.get("/trpl-cn"),
-            Some(&"kaisery.github.io/trpl-zh-cn/".to_owned())
+            Some("kaisery.github.io/trpl-zh-cn/")
         );
     }
 
