@@ -1,7 +1,6 @@
-use std::{collections::HashMap, sync::Arc, net::SocketAddr};
+use std::{collections::HashMap, sync::Arc, net::SocketAddr, fs, io::Write};
+use tokio::{spawn, sync::mpsc::{unbounded_channel, UnboundedSender as Sender}};
 use warp::{http::Response, hyper::Body};
-use regex::Regex;
-use sled::{Tree, Config};
 
 type Map = HashMap<String, String>;
 
@@ -25,7 +24,7 @@ pub struct Init {
     pub url: String,
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 pub struct Record {
     pub time: u64,
     pub key: String,
@@ -50,9 +49,8 @@ pub async fn get(url: &str) -> Option<String> {
 
 pub fn init(config: &str, map: &mut Map) -> Option<()> {
     // map.clear();
-    let re = Regex::new("\\s+").unwrap();
-    for line in config.lines().filter(|line| line.len() != 0) {
-        let mut splited = re.split(line);
+    for line in config.lines().filter(|s| s.len() != 0) {
+        let mut splited = line.split(' ').filter(|s| s.len() != 0);
         let key = splited.next()?.to_owned();
         let val = splited.next()?;
         let val = if val.starts_with("http://") {
@@ -66,36 +64,40 @@ pub fn init(config: &str, map: &mut Map) -> Option<()> {
     Some(())
 }
 
-pub fn open_storage(path: String, url: String) -> Tree {
-    let db = Config::new().path(path).open().unwrap();
-    let init = Init {
-        time: now(),
-        url,
-    };
-    db.open_tree(serde_json::to_string(&init).unwrap().as_str()).unwrap()
-}
-
 pub async fn handle(
-    key: String, raw_ip: Option<SocketAddr>, x_raw_ip: Option<String>, map: Arc<Map>, storage: Arc<Tree>
+    key: String, raw_ip: Option<SocketAddr>, x_raw_ip: Option<String>, map: Arc<Map>, log_sender: Sender<Record>
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let result = map.get(&key);
     if let Some(_) = result {
-        let time = now();
-        let record = Record {
-            time,
+        log_sender.send(Record {
+            time: now(),
             key,
             raw_ip: raw_ip.map(|val| val.to_string()),
             x_raw_ip,
-        };
-        storage.insert(
-            time.to_be_bytes(),
-            serde_json::to_string(&record).unwrap().as_str()
-        ).unwrap();
+        }).unwrap();
     }
     Ok(match result {
         None => Response::builder().status(404).body(Body::empty()).unwrap(),
         Some(val) => Response::builder().status(307).header("Location", val).body(Body::empty()).unwrap(),
     })
+}
+
+pub fn log_thread(path: String, url: String) -> Sender<Record> {
+    let (tx, mut rx) = unbounded_channel::<Record>();
+    spawn(async move {
+        let init = Init {
+            time: now(),
+            url,
+        };
+        let mut file = fs::OpenOptions::new().write(true).create(true).append(true).open(path).unwrap();
+        serde_json::to_writer(&file, &init).unwrap();
+        writeln!(file).unwrap();
+        while let Some(record) = rx.recv().await {
+            serde_json::to_writer(&file, &record).unwrap();
+            writeln!(file).unwrap();
+        }
+    });
+    tx
 }
 
 #[cfg(test)]
@@ -117,34 +119,26 @@ trpl-cn kaisery.github.io/trpl-zh-cn/
 
     #[test]
     fn happypath() {
-        let config = EXAMPLE_CONFIG;
-        let map = wrapped_init(config).unwrap();
+        let map = wrapped_init(EXAMPLE_CONFIG).unwrap();
         assert_eq!(
-            map.get("/rust"),
-            Some(&"www.rust-lang.org/".to_owned())
+            map.get("rust").and_then(|s| Some(s.as_str())),
+            Some("https://www.rust-lang.org/")
         );
         assert_eq!(
-            map.get("/trpl-cn"),
-            Some(&"kaisery.github.io/trpl-zh-cn/".to_owned())
+            map.get("trpl-cn").and_then(|s| Some(s.as_str())),
+            Some("https://kaisery.github.io/trpl-zh-cn/")
         );
     }
 
     #[test]
     fn config_redundant_value() {
         let config = "key val redundance\nkey val";
-        assert_eq!(wrapped_init(config), None);
+        matches!(wrapped_init(config), None);
     }
 
     #[test]
     fn config_lack_value() {
         let config = "key val\nkey";
-        assert_eq!(wrapped_init(config), None);
-    }
-
-    #[test]
-    fn path_no_prefix() {
-        let config = EXAMPLE_CONFIG;
-        let map = wrapped_init(config).unwrap();
-        assert_eq!(map.get("rust"), None);
+        matches!(wrapped_init(config), None);
     }
 }

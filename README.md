@@ -8,4 +8,4 @@ The input table is fetched according to the URL via http/https request (if begin
 
 The request method must be GET or HEAD, otherwise returns 400. If the key in the table is matched, returns 307 with the corresponding link, otherwise returns 404.
 
-Access to the matched key will be recorded in the specified folder as a [sled](https://github.com/spacejam/sled) database.
+Access to the matched key will be logged in the specified file as JSON.
