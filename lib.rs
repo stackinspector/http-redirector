@@ -5,15 +5,29 @@ use sled::{Tree, Config};
 
 type Map = HashMap<String, String>;
 
+pub fn now() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis().try_into().unwrap()
+}
+
+pub fn build_client() -> hyper::Client<hyper_rustls::HttpsConnector<hyper::client::connect::HttpConnector>> {
+    let connector = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_webpki_roots()
+        .https_only()
+        .enable_http1()
+        .build();
+    hyper::Client::builder().build(connector)
+}
+
 #[derive(serde::Serialize)]
 pub struct Init {
-    pub time: i64,
+    pub time: u64,
     pub url: String,
 }
 
 #[derive(serde::Serialize)]
 pub struct Record {
-    pub time: i64,
+    pub time: u64,
     pub key: String,
     pub raw_ip: Option<String>,
     pub x_raw_ip: Option<String>,
@@ -21,10 +35,13 @@ pub struct Record {
 
 pub async fn get(url: &str) -> Option<String> {
     if url.starts_with("http") {
-        let resp = reqwest::get(url).await.ok()?;
-        match resp.status().as_u16() {
-            200 => resp.text().await.ok(),
-            _ => None,
+        let client = build_client();
+        let resp = client.get(url.parse().ok()?).await.ok()?;
+        if resp.status().as_u16() == 200 {
+            let bytes = hyper::body::to_bytes(resp.into_body()).await.ok()?;
+            String::from_utf8(bytes.as_ref().to_vec()).ok()
+        } else {
+            None
         }
     } else {
         tokio::fs::read_to_string(url).await.ok()
@@ -49,14 +66,10 @@ pub fn init(config: &str, map: &mut Map) -> Option<()> {
     Some(())
 }
 
-pub fn time() -> i64 {
-    chrono::Utc::now().timestamp_millis()
-}
-
 pub fn open_storage(path: String, url: String) -> Tree {
     let db = Config::new().path(path).open().unwrap();
     let init = Init {
-        time: time(),
+        time: now(),
         url,
     };
     db.open_tree(serde_json::to_string(&init).unwrap().as_str()).unwrap()
@@ -67,7 +80,7 @@ pub async fn handle(
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let result = map.get(&key);
     if let Some(_) = result {
-        let time = time();
+        let time = now();
         let record = Record {
             time,
             key,
@@ -108,11 +121,11 @@ trpl-cn kaisery.github.io/trpl-zh-cn/
         let map = wrapped_init(config).unwrap();
         assert_eq!(
             map.get("/rust"),
-            Some("www.rust-lang.org/")
+            Some(&"www.rust-lang.org/".to_owned())
         );
         assert_eq!(
             map.get("/trpl-cn"),
-            Some("kaisery.github.io/trpl-zh-cn/")
+            Some(&"kaisery.github.io/trpl-zh-cn/".to_owned())
         );
     }
 
