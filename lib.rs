@@ -28,6 +28,7 @@ pub struct Init {
 pub struct Record {
     pub time: u64,
     pub key: String,
+    pub hit: bool,
     pub ip: Option<String>,
     pub xff: Option<Vec<String>>,
 }
@@ -68,14 +69,13 @@ pub async fn handle(
     key: String, ip: Option<SocketAddr>, xff: Option<String>, map: Arc<Map>, log_sender: Sender<Record>
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let result = map.get(&key);
-    if let Some(_) = result {
-        log_sender.send(Record {
-            time: now(),
-            key,
-            ip: ip.map(|val| val.to_string()),
-            xff: xff.and_then(|s| Some(s.split(',').map(|s| s.to_owned()).collect())),
-        }).unwrap();
-    }
+    log_sender.send(Record {
+        time: now(),
+        key,
+        hit: result.is_some(),
+        ip: ip.map(|val| val.to_string()),
+        xff: xff.map(|val| val.split(',').map(|s| s.to_owned()).collect()),
+    }).unwrap();
     Ok(match result {
         None => Response::builder().status(404).body(Body::empty()).unwrap(),
         Some(val) => Response::builder().status(307).header("Location", val).body(Body::empty()).unwrap(),
