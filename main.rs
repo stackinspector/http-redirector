@@ -1,8 +1,8 @@
-use std::{collections::HashMap, sync::Arc, io, fs, path::PathBuf};
+use std::{sync::Arc, path::PathBuf};
 use tokio::{spawn, signal, sync::oneshot};
 use structopt::StructOpt;
 use warp::Filter;
-use http_redirector::{get, init, handle, log_thread};
+use http_redirector::{init, handle};
 
 #[derive(StructOpt)]
 #[structopt(about = concat!(env!("CARGO_PKG_DESCRIPTION"), "\nsee https://github.com/stackinspector/http-redirector"))]
@@ -19,18 +19,10 @@ struct Args {
 async fn main() {
     let Args { port, url, log_path } = Args::from_args();
 
-    let map = Arc::new({
-        let mut _map = HashMap::new();
-        let config = get(url.as_str()).await.unwrap();
-        init(config.as_str(), &mut _map).unwrap();
-        _map
-    });
-    let map_filter = warp::any().map(move || map.clone());
+    let (map, log_sender) = init(url, log_path).await;
+    let map = Arc::new(map);
 
-    let log_sender = match log_path {
-        Some(path) => log_thread(url, fs::OpenOptions::new().write(true).create(true).append(true).open(path).unwrap()),
-        None => log_thread(url, io::stdout()),
-    };
+    let map_filter = warp::any().map(move || map.clone());
     let log_sender_filter = warp::any().map(move || log_sender.clone());
 
     let (tx, rx) = oneshot::channel();
@@ -44,7 +36,7 @@ async fn main() {
         .and_then(handle);
 
     let (_addr, server) = warp::serve(route).bind_with_graceful_shutdown(
-        ([127, 0, 0, 1], port),
+        ([0, 0, 0, 0], port),
         async { rx.await.unwrap(); }
     );
 

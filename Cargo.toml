@@ -1,6 +1,6 @@
 [package]
 name = "http-redirector"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 authors = ["stackinspector"]
 license = "Apache-2.0"
