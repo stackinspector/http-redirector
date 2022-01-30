@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, sync::Arc, fs};
 use tokio::{spawn, signal, sync::oneshot};
 use structopt::StructOpt;
 use warp::Filter;
@@ -19,6 +19,8 @@ struct Args {
 async fn main() {
     let Args { port, url, log_path } = Args::from_args();
 
+    let file = fs::OpenOptions::new().write(true).create(true).append(true).open(log_path).unwrap();
+
     let map = Arc::new({
         let mut _map = HashMap::new();
         let config = get(url.as_str()).await.unwrap();
@@ -27,7 +29,7 @@ async fn main() {
     });
     let map_filter = warp::any().map(move || map.clone());
 
-    let log_sender = log_thread(log_path, url);
+    let log_sender = log_thread(url, file);
     let log_sender_filter = warp::any().map(move || log_sender.clone());
 
     let (tx, rx) = oneshot::channel();

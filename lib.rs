@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, net::SocketAddr, fs, io::Write};
+use std::{collections::HashMap, sync::Arc, net::SocketAddr, io::Write};
 use tokio::{spawn, sync::mpsc::{unbounded_channel, UnboundedSender as Sender}};
 use warp::{http::Response, hyper::Body};
 
@@ -82,19 +82,18 @@ pub async fn handle(
     })
 }
 
-pub fn log_thread(path: String, url: String) -> Sender<Record> {
+pub fn log_thread<W: Write + 'static + Send>(url: String, mut writer: W) -> Sender<Record> {
     let (tx, mut rx) = unbounded_channel::<Record>();
     spawn(async move {
         let init = Init {
             time: now(),
             url,
         };
-        let mut file = fs::OpenOptions::new().write(true).create(true).append(true).open(path).unwrap();
-        serde_json::to_writer(&file, &init).unwrap();
-        writeln!(file).unwrap();
+        serde_json::to_writer(&mut writer, &init).unwrap();
+        writeln!(writer).unwrap();
         while let Some(record) = rx.recv().await {
-            serde_json::to_writer(&file, &record).unwrap();
-            writeln!(file).unwrap();
+            serde_json::to_writer(&mut writer, &record).unwrap();
+            writeln!(writer).unwrap();
         }
     });
     tx
