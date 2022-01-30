@@ -28,8 +28,8 @@ pub struct Init {
 pub struct Record {
     pub time: u64,
     pub key: String,
-    pub raw_ip: Option<String>,
-    pub x_raw_ip: Option<String>,
+    pub ip: Option<String>,
+    pub xff: Option<Vec<String>>,
 }
 
 pub async fn get(url: &str) -> Option<String> {
@@ -65,15 +65,15 @@ pub fn init(config: &str, map: &mut Map) -> Option<()> {
 }
 
 pub async fn handle(
-    key: String, raw_ip: Option<SocketAddr>, x_raw_ip: Option<String>, map: Arc<Map>, log_sender: Sender<Record>
+    key: String, ip: Option<SocketAddr>, xff: Option<String>, map: Arc<Map>, log_sender: Sender<Record>
 ) -> Result<impl warp::Reply, warp::Rejection> {
     let result = map.get(&key);
     if let Some(_) = result {
         log_sender.send(Record {
             time: now(),
             key,
-            raw_ip: raw_ip.map(|val| val.to_string()),
-            x_raw_ip,
+            ip: ip.map(|val| val.to_string()),
+            xff: xff.and_then(|s| Some(s.split(',').map(|s| s.to_owned()).collect())),
         }).unwrap();
     }
     Ok(match result {
@@ -121,12 +121,12 @@ trpl-cn kaisery.github.io/trpl-zh-cn/
     fn happypath() {
         let map = wrapped_init(EXAMPLE_CONFIG).unwrap();
         assert_eq!(
-            map.get("rust").and_then(|s| Some(s.as_str())),
-            Some("https://www.rust-lang.org/")
+            map.get("rust").unwrap().as_str(),
+            "https://www.rust-lang.org/"
         );
         assert_eq!(
-            map.get("trpl-cn").and_then(|s| Some(s.as_str())),
-            Some("https://kaisery.github.io/trpl-zh-cn/")
+            map.get("trpl-cn").unwrap().as_str(),
+            "https://kaisery.github.io/trpl-zh-cn/"
         );
     }
 

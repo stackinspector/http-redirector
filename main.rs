@@ -35,7 +35,7 @@ async fn main() {
     let route = warp::path::param::<String>()
         .and(warp::get())
         .and(warp::addr::remote())
-        .and(warp::header::optional::<String>("X-Raw-IP"))
+        .and(warp::header::optional::<String>("X-Forward-For"))
         .and(map_filter.clone())
         .and(log_sender_filter.clone())
         .and_then(handle);
