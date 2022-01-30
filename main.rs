@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, io, fs};
+use std::{collections::HashMap, sync::Arc, io, fs, path::PathBuf};
 use tokio::{spawn, signal, sync::oneshot};
 use structopt::StructOpt;
 use warp::Filter;
@@ -11,8 +11,8 @@ struct Args {
     port: u16,
     #[structopt(short = "c", long = "config")]
     url: String,
-    #[structopt(short = "l", long)]
-    log_path: Option<String>,
+    #[structopt(short = "l", long, parse(from_os_str))]
+    log_path: Option<PathBuf>,
 }
 
 #[tokio::main]
