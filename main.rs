@@ -1,8 +1,8 @@
-use std::{sync::Arc, path::PathBuf};
+use std::{sync::Arc, net::SocketAddr, path::PathBuf};
 use tokio::{spawn, signal, sync::oneshot};
 use structopt::StructOpt;
-use warp::Filter;
-use http_redirector::{init, handle};
+use warp::{Filter, http::Response, hyper::Body};
+use http_redirector::*;
 
 #[derive(StructOpt)]
 #[structopt(about = concat!(env!("CARGO_PKG_DESCRIPTION"), "\nsee https://github.com/stackinspector/http-redirector"))]
@@ -13,6 +13,28 @@ struct Args {
     url: String,
     #[structopt(short = "l", long, parse(from_os_str))]
     log_path: Option<PathBuf>,
+}
+
+async fn handle(
+    key: String, ip: Option<SocketAddr>, xff: Option<String>, map: Arc<Map>, log_sender: Sender
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let time = now();
+    let mut from = Vec::new();
+    if let Some(ip) = ip {
+        from.push(ip.to_string())
+    };
+    if let Some(xff) = xff {
+        for _ip in xff.split(',') {
+            from.push(_ip.to_owned())
+        }
+    };
+    let result = map.get(&key);
+    let hit = result.is_some();
+    log_sender.send(Event { time, from, key, hit }).unwrap();
+    Ok(match result {
+        None => Response::builder().status(404).body(Body::empty()).unwrap(),
+        Some(val) => Response::builder().status(307).header("Location", val).body(Body::empty()).unwrap(),
+    })
 }
 
 #[tokio::main]

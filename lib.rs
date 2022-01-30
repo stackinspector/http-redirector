@@ -1,9 +1,8 @@
-use std::{collections::HashMap, sync::Arc, net::SocketAddr, io::{self, Write}, fs, path::PathBuf};
-use tokio::{spawn, sync::mpsc::{unbounded_channel, UnboundedSender as Sender}};
+use std::{collections::HashMap, io::{self, Write}, fs, path::PathBuf};
+use tokio::{spawn, sync::mpsc::{unbounded_channel, UnboundedSender}};
 pub use serde_json::Value as JsonValue;
-use warp::{http::Response, hyper::Body};
 
-type Map = HashMap<String, String>;
+pub type Map = HashMap<String, String>;
 
 pub fn now() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -12,7 +11,7 @@ pub fn now() -> u64 {
 
 type HttpClient = hyper::Client<hyper_rustls::HttpsConnector<hyper::client::connect::HttpConnector>>;
 
-pub fn build_client() -> HttpClient {
+fn build_client() -> HttpClient {
     let connector = hyper_rustls::HttpsConnectorBuilder::new()
         .with_webpki_roots()
         .https_only()
@@ -36,6 +35,8 @@ pub struct Event {
     pub key: String,
     pub hit: bool,
 }
+
+pub type Sender = UnboundedSender<Event>;
 
 async fn get(url: &str) -> Option<String> {
     if url.starts_with("http") {
@@ -69,29 +70,7 @@ fn init_map(config: &str, map: &mut Map) -> Option<()> {
     Some(())
 }
 
-pub async fn handle(
-    key: String, ip: Option<SocketAddr>, xff: Option<String>, map: Arc<Map>, log_sender: Sender<Event>
-) -> Result<impl warp::Reply, warp::Rejection> {
-    let time = now();
-    let mut from = Vec::new();
-    if let Some(ip) = ip {
-        from.push(ip.to_string())
-    };
-    if let Some(xff) = xff {
-        for _ip in xff.split(',') {
-            from.push(_ip.to_owned())
-        }
-    };
-    let result = map.get(&key);
-    let hit = result.is_some();
-    log_sender.send(Event { time, from, key, hit }).unwrap();
-    Ok(match result {
-        None => Response::builder().status(404).body(Body::empty()).unwrap(),
-        Some(val) => Response::builder().status(307).header("Location", val).body(Body::empty()).unwrap(),
-    })
-}
-
-pub fn log_thread<W: Write + 'static + Send>(init: Init, mut writer: W) -> Sender<Event> {
+fn log_thread<W: Write + 'static + Send>(init: Init, mut writer: W) -> Sender {
     let (tx, mut rx) = unbounded_channel::<Event>();
     spawn(async move {
         serde_json::to_writer(&mut writer, &init).unwrap();
@@ -104,7 +83,7 @@ pub fn log_thread<W: Write + 'static + Send>(init: Init, mut writer: W) -> Sende
     tx
 }
 
-pub async fn init(url: String, log_path: Option<PathBuf>) -> (Map, Sender<Event>) {
+pub async fn init(url: String, log_path: Option<PathBuf>) -> (Map, Sender) {
     let mut map = HashMap::new();
     let config = get(url.as_str()).await.unwrap();
     init_map(config.as_str(), &mut map).unwrap();
