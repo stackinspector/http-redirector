@@ -13,6 +13,8 @@ struct Args {
     url: String,
     #[structopt(short = "l", long, parse(from_os_str))]
     log_path: Option<PathBuf>,
+    #[structopt(short = "x", long = "prefix")]
+    prefix: String,
 }
 
 async fn handle(
@@ -39,7 +41,7 @@ async fn handle(
 
 #[tokio::main]
 async fn main() {
-    let Args { port, url, log_path } = Args::from_args();
+    let Args { port, url, log_path, prefix } = Args::from_args();
 
     let (map, log_sender) = init(url, log_path).await;
     let map = Arc::new(map);
@@ -49,7 +51,8 @@ async fn main() {
 
     let (tx, rx) = oneshot::channel();
 
-    let route = warp::path::param::<String>()
+    let route = warp::path(prefix)
+        .and(warp::path::param::<String>())
         .and(warp::get())
         .and(warp::addr::remote())
         .and(warp::header::optional::<String>("X-Forward-For"))
