@@ -1,7 +1,7 @@
-use std::{sync::Arc, net::SocketAddr, path::PathBuf};
+use std::path::PathBuf;
 use tokio::{spawn, signal, sync::oneshot};
 use structopt::StructOpt;
-use warp::{Filter, http::Response, hyper::Body};
+use warp::Filter;
 use http_redirector::*;
 
 #[derive(StructOpt)]
@@ -9,55 +9,30 @@ use http_redirector::*;
 struct Args {
     #[structopt(short = "p", long, default_value = "8080")]
     port: u16,
-    #[structopt(short = "c", long = "config")]
-    url: String,
+    #[structopt(short = "c", long = "configs")]
+    input: String,
     #[structopt(short = "l", long, parse(from_os_str))]
     log_path: Option<PathBuf>,
-    #[structopt(short = "x", long = "prefix")]
-    prefix: String,
-}
-
-async fn handle(
-    key: String, ip: Option<SocketAddr>, xff: Option<String>, map: Arc<Map>, log_sender: Sender
-) -> Result<impl warp::Reply, warp::Rejection> {
-    let time = now();
-    let mut from = Vec::new();
-    if let Some(ip) = ip {
-        from.push(ip.to_string())
-    };
-    if let Some(xff) = xff {
-        for _ip in xff.split(',') {
-            from.push(_ip.to_owned())
-        }
-    };
-    let result = map.get(&key);
-    let hit = result.is_some();
-    log_sender.send(Event { time, from, key, hit }).unwrap();
-    Ok(match result {
-        None => Response::builder().status(404).body(Body::empty()).unwrap(),
-        Some(val) => Response::builder().status(307).header("Location", val).body(Body::empty()).unwrap(),
-    })
 }
 
 #[tokio::main]
 async fn main() {
-    let Args { port, url, log_path, prefix } = Args::from_args();
+    let Args { port, input, log_path } = Args::from_args();
 
-    let (map, log_sender) = init(url, log_path).await;
-    let map = Arc::new(map);
+    let (state, log_sender) = init(input, log_path).await.unwrap();
 
-    let map_filter = warp::any().map(move || map.clone());
+    let state_filter = warp::any().map(move || state.clone());
     let log_sender_filter = warp::any().map(move || log_sender.clone());
 
     let (tx, rx) = oneshot::channel();
 
-    let route = warp::path(prefix)
+    let route = warp::get()
         .and(warp::path::param::<String>())
-        .and(warp::get())
+        .and(warp::path::param::<String>())
         .and(warp::addr::remote())
         .and(warp::header::optional::<String>("X-Forwarded-For"))
-        .and(map_filter.clone())
-        .and(log_sender_filter.clone())
+        .and(state_filter)
+        .and(log_sender_filter)
         .and_then(handle);
 
     let (_addr, server) = warp::serve(route).bind_with_graceful_shutdown(
