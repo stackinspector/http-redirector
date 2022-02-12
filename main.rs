@@ -18,12 +18,7 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let Args { port, input, log_path } = Args::from_args();
-
     let (wrapped_state, log_sender) = init(input, log_path).await.unwrap();
-
-    let state_filter = warp::any().map(move || wrapped_state.clone());
-    let log_sender_filter = warp::any().map(move || log_sender.clone());
-
     let (tx, rx) = oneshot::channel();
 
     let route = warp::get()
@@ -31,9 +26,9 @@ async fn main() {
         .and(warp::path::param::<String>())
         .and(warp::addr::remote())
         .and(warp::header::optional::<String>("X-Forwarded-For"))
-        .and(state_filter)
-        .and(log_sender_filter)
-        .and_then(handle);
+        .and(warp::any().map(move || wrapped_state.clone()))
+        .and(warp::any().map(move || log_sender.clone()))
+        .then(handle);
 
     let (_addr, server) = warp::serve(route).bind_with_graceful_shutdown(
         ([0, 0, 0, 0], port),

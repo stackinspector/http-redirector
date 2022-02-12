@@ -1,6 +1,9 @@
 use std::{collections::HashMap, io::{self, Write}, fs, path::PathBuf, net::SocketAddr, sync::Arc};
 use tokio::{spawn, sync::{mpsc::{unbounded_channel, UnboundedSender}, RwLock}};
+use serde::Serialize;
 use warp::{http::Response, hyper::Body};
+
+const UPDATE_PATH_STR: &str = "__update__";
 
 fn now() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -14,7 +17,7 @@ fn split_kv<'a, I: Iterator<Item = &'a str>>(mut iter: I) -> Option<(&'a str, &'
     Some((key, val))
 }
 
-#[derive(serde::Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug)]
 pub struct Zone {
     pub url: String,
     pub map: HashMap<String, String>,
@@ -23,7 +26,7 @@ pub struct Zone {
 pub type State = HashMap<String, Zone>;
 pub type WrappedState = Arc<RwLock<State>>;
 
-#[derive(serde::Serialize, Debug)]
+#[derive(Serialize, Debug)]
 #[serde(tag = "type", content = "data")]
 pub enum Event {
     Init {
@@ -38,14 +41,27 @@ pub enum Event {
     },
     Update {
         from: Vec<String>,
-        state: State,
+        zone: String,
+        result: UpdateResult,
     },
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 struct WrappedEvent {
     time: u64,
     event: Event,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(tag = "type", content = "data")]
+pub enum UpdateResult {
+    Succeed {
+        new: Zone,
+        old: Zone,
+    },
+    ZoneNotFound,
+    GetConfigError(String),
+    ParseConfigError,
 }
 
 type HttpClient = hyper::Client<hyper_rustls::HttpsConnector<hyper::client::connect::HttpConnector>>;
@@ -59,7 +75,7 @@ fn build_http_client() -> HttpClient {
     hyper::Client::builder().build(connector)
 }
 
-pub async fn get(url: &str) -> anyhow::Result<String> {
+async fn get(url: &str) -> anyhow::Result<String> {
     if url.starts_with("http") {
         let client = build_http_client();
         let resp = client.get(url.parse()?).await?;
@@ -76,7 +92,7 @@ pub async fn get(url: &str) -> anyhow::Result<String> {
 
 pub type LogSender = UnboundedSender<Event>;
 
-pub fn log_thread<'a, W: Write + 'static + Send>(mut writer: W) -> LogSender {
+fn log_thread<'a, W: Write + 'static + Send>(mut writer: W) -> LogSender {
     let (tx, mut rx) = unbounded_channel::<Event>();
     spawn(async move {
         while let Some(event) = rx.recv().await {
@@ -105,8 +121,8 @@ pub async fn init(input: String, log_path: Option<PathBuf>) -> anyhow::Result<(W
     let mut state = HashMap::new();
     for pair in input.split(';') {
         let (zone_name, url) = split_kv(pair.split(',')).ok_or_else(|| anyhow::anyhow!("parsing input error"))?;
-        if zone_name == "__update__" {
-            return Err(anyhow::anyhow!("zone name should not be \"__update__\""))
+        if zone_name == UPDATE_PATH_STR {
+            return Err(anyhow::anyhow!("zone name should not be \"{}\"", UPDATE_PATH_STR))
         }
         let config = get(url).await?;
         let map = init_map(config.as_str()).ok_or_else(|| anyhow::anyhow!("parsing config {} error", url))?;
@@ -123,7 +139,10 @@ pub async fn init(input: String, log_path: Option<PathBuf>) -> anyhow::Result<(W
     Ok((Arc::new(RwLock::new(state)), log_sender))
 }
 
-pub fn handle_ip(ip: Option<SocketAddr>, xff: Option<String>) -> Vec<String> {
+pub async fn handle(
+    zone: String, key: String, ip: Option<SocketAddr>, xff: Option<String>, wrapped_state: WrappedState, log_sender: LogSender
+) -> Response<Body> {
+    let resp = Response::builder();
     let mut from = Vec::new();
     if let Some(xff) = xff {
         for _ip in xff.split(',') {
@@ -133,21 +152,48 @@ pub fn handle_ip(ip: Option<SocketAddr>, xff: Option<String>) -> Vec<String> {
     if let Some(ip) = ip {
         from.push(ip.to_string())
     };
-    from
-}
-
-pub async fn handle(
-    zone: String, key: String, ip: Option<SocketAddr>, xff: Option<String>, wrapped_state: WrappedState, log_sender: LogSender
-) -> Result<impl warp::Reply, warp::Rejection> {
-    let state_ref = wrapped_state.read().await;
-    let result = state_ref.get(&zone).and_then(|zone| zone.map.get(&key));
-    let from = handle_ip(ip, xff);
-    let hit = result.is_some();
-    log_sender.send(Event::Get { from, zone, key, hit }).unwrap();
-    Ok(match result {
-        None => Response::builder().status(404).body(Body::empty()).unwrap(),
-        Some(val) => Response::builder().status(307).header("Location", val).body(Body::empty()).unwrap(),
-    })
+    if zone == UPDATE_PATH_STR {
+        let zone = key;
+        let mut state_ref = wrapped_state.write().await;
+        let result = match state_ref.get(&zone) {
+            None => UpdateResult::ZoneNotFound,
+            Some(zone_state) => {
+                match get(&zone_state.url).await {
+                    Err(error) => UpdateResult::GetConfigError(format!("{:#}", error)),
+                    Ok(config) => {
+                        match init_map(config.as_str()) {
+                            None => UpdateResult::ParseConfigError,
+                            Some(map) => {
+                                let new = Zone {
+                                    url: zone_state.url.clone(),
+                                    map,
+                                };
+                                let old = state_ref.insert(zone.clone(), new.clone()).unwrap();
+                                UpdateResult::Succeed { new, old }
+                            },
+                        }
+                    },
+                }
+            },
+        };
+        let resp_status = match result {
+            UpdateResult::Succeed { .. } => 200,
+            UpdateResult::ZoneNotFound => 404,
+            _ => 500,
+        };
+        let resp_body = Body::from(serde_json::to_string(&result).unwrap());
+        log_sender.send(Event::Update { from, zone, result }).unwrap();
+        resp.status(resp_status).header("Content-Type", "application/json; charset=utf-8").body(resp_body).unwrap()
+    } else {
+        let state_ref = wrapped_state.read().await;
+        let result = state_ref.get(&zone).and_then(|zone| zone.map.get(&key));
+        let hit = result.is_some();
+        log_sender.send(Event::Get { from, zone, key, hit }).unwrap();
+        match result {
+            None => resp.status(404),
+            Some(val) => resp.status(307).header("Location", val),
+        }.body(Body::empty()).unwrap()
+    }
 }
 
 #[cfg(test)]
