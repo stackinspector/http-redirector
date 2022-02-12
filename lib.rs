@@ -1,5 +1,5 @@
 use std::{collections::HashMap, io::{self, Write}, fs, path::PathBuf, net::SocketAddr, sync::Arc};
-use tokio::{spawn, sync::mpsc::{unbounded_channel, UnboundedSender}};
+use tokio::{spawn, sync::{mpsc::{unbounded_channel, UnboundedSender}, RwLock}};
 use warp::{http::Response, hyper::Body};
 
 fn now() -> u64 {
@@ -21,7 +21,7 @@ pub struct Zone {
 }
 
 pub type State = HashMap<String, Zone>;
-pub type WrappedState = Arc<State>;
+pub type WrappedState = Arc<RwLock<State>>;
 
 #[derive(serde::Serialize, Debug)]
 #[serde(tag = "type", content = "data")]
@@ -120,7 +120,7 @@ pub async fn init(input: String, log_path: Option<PathBuf>) -> anyhow::Result<(W
         ver: env!("CARGO_PKG_VERSION").to_owned(),
         state: state.clone(),
     })?;
-    Ok((Arc::new(state), log_sender))
+    Ok((Arc::new(RwLock::new(state)), log_sender))
 }
 
 pub fn handle_ip(ip: Option<SocketAddr>, xff: Option<String>) -> Vec<String> {
@@ -137,9 +137,10 @@ pub fn handle_ip(ip: Option<SocketAddr>, xff: Option<String>) -> Vec<String> {
 }
 
 pub async fn handle(
-    zone: String, key: String, ip: Option<SocketAddr>, xff: Option<String>, state: WrappedState, log_sender: LogSender
+    zone: String, key: String, ip: Option<SocketAddr>, xff: Option<String>, wrapped_state: WrappedState, log_sender: LogSender
 ) -> Result<impl warp::Reply, warp::Rejection> {
-    let result = state.get(&zone).and_then(|zone| zone.map.get(&key));
+    let state_ref = wrapped_state.read().await;
+    let result = state_ref.get(&zone).and_then(|zone| zone.map.get(&key));
     let from = handle_ip(ip, xff);
     let hit = result.is_some();
     log_sender.send(Event::Get { from, zone, key, hit }).unwrap();

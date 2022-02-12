@@ -19,9 +19,9 @@ struct Args {
 async fn main() {
     let Args { port, input, log_path } = Args::from_args();
 
-    let (state, log_sender) = init(input, log_path).await.unwrap();
+    let (wrapped_state, log_sender) = init(input, log_path).await.unwrap();
 
-    let state_filter = warp::any().map(move || state.clone());
+    let state_filter = warp::any().map(move || wrapped_state.clone());
     let log_sender_filter = warp::any().map(move || log_sender.clone());
 
     let (tx, rx) = oneshot::channel();
