@@ -2,7 +2,7 @@
 
 A simple http redirection service with access logging based on an input key-link table.
 
-> hr -c "./example-redirect" -p 80
+> hr -c "example,./example-redirect" -p 80
 
 Startup parameter `--config` or `-c` determines how the program fetches the input. For URLs beginning with 'http', the program will fetch via HTTP/HTTPS, otherwise, the program will use a local path. Examples are listed in `example-redirect`.
 

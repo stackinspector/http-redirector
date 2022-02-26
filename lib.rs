@@ -79,11 +79,12 @@ async fn get(url: &str) -> anyhow::Result<String> {
     if url.starts_with("http") {
         let client = build_http_client();
         let resp = client.get(url.parse()?).await?;
-        if resp.status().as_u16() == 200 {
+        let status = resp.status().as_u16();
+        if status == 200 {
             let bytes = hyper::body::to_bytes(resp.into_body()).await?;
             Ok(String::from_utf8(bytes.as_ref().to_vec())?)
         } else {
-            Err(anyhow::anyhow!("http request returns non 200 response"))
+            Err(anyhow::anyhow!("http request returns status {}", status))
         }
     } else {
         Ok(tokio::fs::read_to_string(url).await?)
@@ -107,12 +108,12 @@ fn init_map(config: &str) -> Option<HashMap<String, String>> {
     let mut map = HashMap::new();
     for line in config.lines().filter(|s| s.len() != 0) {
         let (key, val) = split_kv(line.split(' ').filter(|s| s.len() != 0))?;
-        let val = if val.starts_with("http://") {
+        let val = if val.starts_with("http") {
             val.to_owned()
         } else {
             format!("https://{}", val)
         };
-        map.insert(key.to_owned(), val);
+        assert!(matches!(map.insert(key.to_owned(), val), None));
     }
     Some(map)
 }
@@ -120,12 +121,16 @@ fn init_map(config: &str) -> Option<HashMap<String, String>> {
 pub async fn init(input: String, log_path: Option<PathBuf>) -> anyhow::Result<(WrappedState, LogSender)> {
     let mut state = HashMap::new();
     for pair in input.split(';') {
-        let (zone_name, url) = split_kv(pair.split(',')).ok_or_else(|| anyhow::anyhow!("parsing input error"))?;
+        let (zone_name, url) = split_kv(pair.split(',')).ok_or_else(|| {
+            anyhow::anyhow!("parsing input error")
+        })?;
         if zone_name == UPDATE_PATH_STR {
             return Err(anyhow::anyhow!("zone name should not be \"{}\"", UPDATE_PATH_STR))
         }
         let config = get(url).await?;
-        let map = init_map(config.as_str()).ok_or_else(|| anyhow::anyhow!("parsing config {} error", url))?;
+        let map = init_map(config.as_str()).ok_or_else(|| {
+            anyhow::anyhow!("parsing config {} error", url)
+        })?;
         state.insert(zone_name.to_owned(), Zone { url: url.to_owned(), map });
     }
     let log_sender = match log_path {
