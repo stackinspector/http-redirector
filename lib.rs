@@ -18,12 +18,12 @@ fn split_kv<'a, I: Iterator<Item = &'a str>>(mut iter: I) -> Option<(&'a str, &'
 }
 
 #[derive(Serialize, Clone, Debug)]
-pub struct Zone {
+pub struct Scope {
     pub url: String,
     pub map: HashMap<String, String>,
 }
 
-pub type State = HashMap<String, Zone>;
+pub type State = HashMap<String, Scope>;
 pub type WrappedState = Arc<RwLock<State>>;
 
 #[derive(Serialize, Debug)]
@@ -35,13 +35,13 @@ pub enum InnerEvent {
     },
     Get {
         from: Vec<String>,
-        zone: String,
+        scope: String,
         key: String,
         hit: bool,
     },
     Update {
         from: Vec<String>,
-        zone: String,
+        scope: String,
         result: UpdateResult,
     },
 }
@@ -56,10 +56,10 @@ pub struct Event {
 #[serde(tag = "type", content = "data")]
 pub enum UpdateResult {
     Succeed {
-        new: Zone,
-        old: Zone,
+        new: Scope,
+        old: Scope,
     },
-    ZoneNotFound,
+    ScopeNotFound,
     GetConfigError(String),
     ParseConfigError,
 }
@@ -121,17 +121,17 @@ fn init_map(config: &str) -> Option<HashMap<String, String>> {
 pub async fn init(input: String, log_path: Option<PathBuf>) -> anyhow::Result<(WrappedState, LogSender)> {
     let mut state = HashMap::new();
     for pair in input.split(';') {
-        let (zone_name, url) = split_kv(pair.split(',')).ok_or_else(|| {
+        let (scope_name, url) = split_kv(pair.split(',')).ok_or_else(|| {
             anyhow::anyhow!("parsing input error")
         })?;
-        if zone_name == UPDATE_PATH_STR {
-            return Err(anyhow::anyhow!("zone name should not be \"{}\"", UPDATE_PATH_STR))
+        if scope_name == UPDATE_PATH_STR {
+            return Err(anyhow::anyhow!("scope name should not be \"{}\"", UPDATE_PATH_STR))
         }
         let config = get(url).await?;
         let map = init_map(config.as_str()).ok_or_else(|| {
             anyhow::anyhow!("parsing config \"{}\" error", url)
         })?;
-        state.insert(zone_name.to_owned(), Zone { url: url.to_owned(), map });
+        state.insert(scope_name.to_owned(), Scope { url: url.to_owned(), map });
     }
     let log_sender = match log_path {
         Some(path) => log_thread(fs::OpenOptions::new().write(true).create(true).append(true).open(path)?),
@@ -146,7 +146,7 @@ pub async fn init(input: String, log_path: Option<PathBuf>) -> anyhow::Result<(W
 }
 
 pub async fn handle(
-    zone: String, key: String, ip: Option<SocketAddr>, xff: Option<String>, wrapped_state: WrappedState, log_sender: LogSender
+    scope: String, key: String, ip: Option<SocketAddr>, xff: Option<String>, wrapped_state: WrappedState, log_sender: LogSender
 ) -> Response<Body> {
     let time = now();
     let resp = Response::builder();
@@ -159,23 +159,23 @@ pub async fn handle(
     if let Some(ip) = ip {
         from.push(ip.to_string())
     };
-    if zone == UPDATE_PATH_STR {
-        let zone = key;
+    if scope == UPDATE_PATH_STR {
+        let scope = key;
         let mut state_ref = wrapped_state.write().await;
-        let result = match state_ref.get(&zone) {
-            None => UpdateResult::ZoneNotFound,
-            Some(zone_state) => {
-                match get(&zone_state.url).await {
+        let result = match state_ref.get(&scope) {
+            None => UpdateResult::ScopeNotFound,
+            Some(scope_state) => {
+                match get(&scope_state.url).await {
                     Err(error) => UpdateResult::GetConfigError(format!("{:#}", error)),
                     Ok(config) => {
                         match init_map(config.as_str()) {
                             None => UpdateResult::ParseConfigError,
                             Some(map) => {
-                                let new = Zone {
-                                    url: zone_state.url.clone(),
+                                let new = Scope {
+                                    url: scope_state.url.clone(),
                                     map,
                                 };
-                                let old = state_ref.insert(zone.clone(), new.clone()).unwrap();
+                                let old = state_ref.insert(scope.clone(), new.clone()).unwrap();
                                 UpdateResult::Succeed { new, old }
                             },
                         }
@@ -185,17 +185,17 @@ pub async fn handle(
         };
         let resp_status = match result {
             UpdateResult::Succeed { .. } => 200,
-            UpdateResult::ZoneNotFound => 404,
+            UpdateResult::ScopeNotFound => 404,
             _ => 500,
         };
         let resp_body = Body::from(serde_json::to_string(&result).unwrap());
-        log_sender.send(Event { time, event: InnerEvent::Update { from, zone, result } }).unwrap();
+        log_sender.send(Event { time, event: InnerEvent::Update { from, scope, result } }).unwrap();
         resp.status(resp_status).header("Content-Type", "application/json; charset=utf-8").body(resp_body).unwrap()
     } else {
         let state_ref = wrapped_state.read().await;
-        let result = state_ref.get(&zone).and_then(|zone| zone.map.get(&key));
+        let result = state_ref.get(&scope).and_then(|scope| scope.map.get(&key));
         let hit = result.is_some();
-        log_sender.send(Event { time, event: InnerEvent::Get { from, zone, key, hit } }).unwrap();
+        log_sender.send(Event { time, event: InnerEvent::Get { from, scope, key, hit } }).unwrap();
         match result {
             None => resp.status(404),
             Some(val) => resp.status(307).header("Location", val),
