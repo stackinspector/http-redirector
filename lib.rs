@@ -28,7 +28,7 @@ pub type WrappedState = Arc<RwLock<State>>;
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "type", content = "data")]
-pub enum Event {
+pub enum InnerEvent {
     Init {
         ver: String,
         state: State,
@@ -46,10 +46,10 @@ pub enum Event {
     },
 }
 
-#[derive(Serialize)]
-struct WrappedEvent {
+#[derive(Serialize, Debug)]
+pub struct Event {
     time: u64,
-    event: Event,
+    event: InnerEvent,
 }
 
 #[derive(Serialize, Debug)]
@@ -97,7 +97,7 @@ fn log_thread<'a, W: Write + 'static + Send>(mut writer: W) -> LogSender {
     let (tx, mut rx) = unbounded_channel::<Event>();
     spawn(async move {
         while let Some(event) = rx.recv().await {
-            serde_json::to_writer(&mut writer, &WrappedEvent { time: now(), event }).unwrap();
+            serde_json::to_writer(&mut writer, &event).unwrap();
             writeln!(writer).unwrap();
         }
     });
@@ -129,7 +129,7 @@ pub async fn init(input: String, log_path: Option<PathBuf>) -> anyhow::Result<(W
         }
         let config = get(url).await?;
         let map = init_map(config.as_str()).ok_or_else(|| {
-            anyhow::anyhow!("parsing config {} error", url)
+            anyhow::anyhow!("parsing config \"{}\" error", url)
         })?;
         state.insert(zone_name.to_owned(), Zone { url: url.to_owned(), map });
     }
@@ -137,16 +137,18 @@ pub async fn init(input: String, log_path: Option<PathBuf>) -> anyhow::Result<(W
         Some(path) => log_thread(fs::OpenOptions::new().write(true).create(true).append(true).open(path)?),
         None => log_thread(io::stdout()),
     };
-    log_sender.send(Event::Init {
+    let time = now();
+    log_sender.send(Event { time, event: InnerEvent::Init {
         ver: env!("CARGO_PKG_VERSION").to_owned(),
         state: state.clone(),
-    })?;
+    } })?;
     Ok((Arc::new(RwLock::new(state)), log_sender))
 }
 
 pub async fn handle(
     zone: String, key: String, ip: Option<SocketAddr>, xff: Option<String>, wrapped_state: WrappedState, log_sender: LogSender
 ) -> Response<Body> {
+    let time = now();
     let resp = Response::builder();
     let mut from = Vec::new();
     if let Some(xff) = xff {
@@ -187,13 +189,13 @@ pub async fn handle(
             _ => 500,
         };
         let resp_body = Body::from(serde_json::to_string(&result).unwrap());
-        log_sender.send(Event::Update { from, zone, result }).unwrap();
+        log_sender.send(Event { time, event: InnerEvent::Update { from, zone, result } }).unwrap();
         resp.status(resp_status).header("Content-Type", "application/json; charset=utf-8").body(resp_body).unwrap()
     } else {
         let state_ref = wrapped_state.read().await;
         let result = state_ref.get(&zone).and_then(|zone| zone.map.get(&key));
         let hit = result.is_some();
-        log_sender.send(Event::Get { from, zone, key, hit }).unwrap();
+        log_sender.send(Event { time, event: InnerEvent::Get { from, zone, key, hit } }).unwrap();
         match result {
             None => resp.status(404),
             Some(val) => resp.status(307).header("Location", val),
