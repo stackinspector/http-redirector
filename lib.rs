@@ -32,15 +32,18 @@ pub enum InnerEvent {
     Init {
         ver: String,
         state: State,
+        req_id_header: Option<String>,
     },
     Get {
         from: Vec<String>,
+        req_id: Option<String>,
         scope: String,
         key: String,
         hit: bool,
     },
     Update {
         from: Vec<String>,
+        req_id: Option<String>,
         scope: String,
         result: UpdateResult,
     },
@@ -118,7 +121,7 @@ fn init_map(config: &str) -> Option<HashMap<String, String>> {
     Some(map)
 }
 
-pub async fn init(input: String, log_path: Option<PathBuf>) -> anyhow::Result<(WrappedState, LogSender)> {
+pub async fn init(input: String, log_path: Option<PathBuf>, req_id_header: Option<String>) -> anyhow::Result<(WrappedState, LogSender)> {
     let mut state = HashMap::new();
     for pair in input.split(';') {
         let (scope_name, url) = split_kv(pair.split(',')).ok_or_else(|| {
@@ -141,13 +144,23 @@ pub async fn init(input: String, log_path: Option<PathBuf>) -> anyhow::Result<(W
     log_sender.send(Event { time, event: InnerEvent::Init {
         ver: env!("CARGO_PKG_VERSION").to_owned(),
         state: state.clone(),
+        req_id_header,
     } })?;
     Ok((Arc::new(RwLock::new(state)), log_sender))
 }
 
 pub async fn handle(
-    scope: String, key: String, ip: Option<SocketAddr>, xff: Option<String>, wrapped_state: WrappedState, log_sender: LogSender
+    scope: String,
+    key: String,
+    ip: Option<SocketAddr>,
+    xff: Option<String>,
+    #[cfg(feature = "req-id")] req_id: Option<String>,
+    wrapped_state: WrappedState,
+    log_sender: LogSender,
 ) -> Response<Body> {
+    #[cfg(not(feature = "req-id"))]
+    let req_id = None;
+
     let time = now();
     let resp = Response::builder();
     let mut from = Vec::new();
@@ -189,13 +202,13 @@ pub async fn handle(
             _ => 500,
         };
         let resp_body = Body::from(serde_json::to_string(&result).unwrap());
-        log_sender.send(Event { time, event: InnerEvent::Update { from, scope, result } }).unwrap();
+        log_sender.send(Event { time, event: InnerEvent::Update { from, req_id, scope, result } }).unwrap();
         resp.status(resp_status).header("Content-Type", "application/json; charset=utf-8").body(resp_body).unwrap()
     } else {
         let state_ref = wrapped_state.read().await;
         let result = state_ref.get(&scope).and_then(|scope| scope.map.get(&key));
         let hit = result.is_some();
-        log_sender.send(Event { time, event: InnerEvent::Get { from, scope, key, hit } }).unwrap();
+        log_sender.send(Event { time, event: InnerEvent::Get { from, req_id, scope, key, hit } }).unwrap();
         match result {
             None => resp.status(404),
             Some(val) => resp.status(307).header("Location", val),
