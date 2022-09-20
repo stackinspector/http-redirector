@@ -1,23 +1,26 @@
 use std::path::PathBuf;
 use tokio::{spawn, signal, sync::oneshot};
-use structopt::StructOpt;
 use warp::Filter;
 use http_redirector::*;
 
-#[derive(StructOpt)]
-#[structopt(about = concat!(env!("CARGO_PKG_DESCRIPTION"), "\nsee https://github.com/stackinspector/http-redirector"))]
+// #[argh(description = r#"concat!(env!("CARGO_PKG_DESCRIPTION"), "\nsee https://github.com/stackinspector/http-redirector")"#)]
+#[derive(argh::FromArgs)]
+/// A simple http redirection service with access logging based on an input key-link table. see https://github.com/stackinspector/http-redirector
 struct Args {
-    #[structopt(short = "p", long, default_value = "8080")]
+    /// port
+    #[argh(option, short = 'p', default = "8080")]
     port: u16,
-    #[structopt(short = "c", long = "configs")]
+    /// semicolon-separated list of configs
+    #[argh(option, short = 'c', long = "configs")]
     input: String,
-    #[structopt(short = "l", long, parse(from_os_str))]
+    /// log path
+    #[argh(option, short = 'l')]
     log_path: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() {
-    let Args { port, input, log_path } = Args::from_args();
+    let Args { port, input, log_path } = argh::from_env();
     let (wrapped_state, log_sender) = init(input, log_path).await.unwrap();
     let (tx, rx) = oneshot::channel();
 
