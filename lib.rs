@@ -32,7 +32,7 @@ pub enum InnerEvent {
     Init {
         ver: String,
         state: State,
-        req_id_header: Option<String>,
+        req_id_header: String,
     },
     Get {
         from: Vec<String>,
@@ -121,7 +121,11 @@ fn init_map(config: &str) -> Option<HashMap<String, String>> {
     Some(map)
 }
 
-pub async fn init(input: String, log_path: Option<PathBuf>, req_id_header: Option<String>) -> anyhow::Result<(WrappedState, LogSender)> {
+pub async fn init(
+    input: String,
+    log_path: Option<PathBuf>,
+    req_id_header: String,
+) -> anyhow::Result<(WrappedState, LogSender)> {
     let mut state = HashMap::new();
     for pair in input.split(';') {
         let (scope_name, url) = split_kv(pair.split(',')).ok_or_else(|| {
@@ -154,13 +158,10 @@ pub async fn handle(
     key: String,
     ip: Option<SocketAddr>,
     xff: Option<String>,
-    #[cfg(feature = "req-id")] req_id: Option<String>,
+    req_id: Option<String>,
     wrapped_state: WrappedState,
     log_sender: LogSender,
 ) -> Response<Body> {
-    #[cfg(not(feature = "req-id"))]
-    let req_id = None;
-
     let time = now();
     let resp = Response::builder();
     let mut from = Vec::new();

@@ -17,35 +17,25 @@ struct Args {
     #[argh(option, short = 'l')]
     log_path: Option<PathBuf>,
     /// request id header name
-    #[cfg(feature = "req-id")]
-    #[argh(option)]
-    req_id_header: String,
+    #[argh(option, short = 'h')]
+    req_id_header: Option<String>,
 }
 
 #[tokio::main]
 async fn main() {
-    let Args { port, input, log_path, #[cfg(feature = "req-id")] req_id_header } = argh::from_env();
+    let Args { port, input, log_path, req_id_header } = argh::from_env();
 
-    #[cfg(feature = "req-id")]
-    let maybe_req_id_header = Some(req_id_header.clone());
-    #[cfg(not(feature = "req-id"))]
-    let maybe_req_id_header = None;
+    let req_id_header = req_id_header.unwrap_or_default();
 
-    let (wrapped_state, log_sender) = init(input, log_path, maybe_req_id_header).await.unwrap();
+    let (wrapped_state, log_sender) = init(input, log_path, req_id_header.clone()).await.unwrap();
     let (tx, rx) = oneshot::channel();
 
     let route = warp::get()
         .and(warp::path::param::<String>())
         .and(warp::path::param::<String>())
         .and(warp::addr::remote())
-        .and(warp::header::optional::<String>("X-Forwarded-For"));
-
-    #[cfg(feature = "req-id")]
-    let req_id_header: &'static str = Box::leak(req_id_header.into_boxed_str());
-    #[cfg(feature = "req-id")]
-    let route = route.and(warp::header::optional::<String>(req_id_header));
-
-    let route = route
+        .and(warp::header::optional::<String>("X-Forwarded-For"))
+        .and(warp::header::optional::<String>(Box::leak(req_id_header.into_boxed_str())))
         .and(warp::any().map(move || wrapped_state.clone()))
         .and(warp::any().map(move || log_sender.clone()))
         .then(handle);
