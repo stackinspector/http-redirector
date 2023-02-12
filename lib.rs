@@ -13,7 +13,7 @@ fn now() -> u64 {
 fn split_kv<'a, I: Iterator<Item = &'a str>>(mut iter: I) -> Option<(&'a str, &'a str)> {
     let key = iter.next()?;
     let val = iter.next()?;
-    if let Some(_) = iter.next() { return None };
+    if iter.next().is_some() { return None };
     Some((key, val))
 }
 
@@ -96,7 +96,7 @@ async fn get(url: &str) -> anyhow::Result<String> {
 
 pub type LogSender = UnboundedSender<Event>;
 
-fn log_thread<'a, W: Write + 'static + Send>(mut writer: W) -> LogSender {
+fn log_thread<W: Write + 'static + Send>(mut writer: W) -> LogSender {
     let (tx, mut rx) = unbounded_channel::<Event>();
     spawn(async move {
         while let Some(event) = rx.recv().await {
@@ -109,8 +109,8 @@ fn log_thread<'a, W: Write + 'static + Send>(mut writer: W) -> LogSender {
 
 fn init_map(config: &str) -> Option<HashMap<String, String>> {
     let mut map = HashMap::new();
-    for line in config.lines().filter(|s| s.len() != 0) {
-        let (key, val) = split_kv(line.split(' ').filter(|s| s.len() != 0))?;
+    for line in config.lines().filter(|s| s.is_empty()) {
+        let (key, val) = split_kv(line.split(' ').filter(|s| s.is_empty()))?;
         let val = if val.starts_with("http") {
             val.to_owned()
         } else {
@@ -180,7 +180,7 @@ pub async fn handle(
             None => UpdateResult::ScopeNotFound,
             Some(scope_state) => {
                 match get(&scope_state.url).await {
-                    Err(error) => UpdateResult::GetConfigError(format!("{:#}", error)),
+                    Err(error) => UpdateResult::GetConfigError(error.to_string()),
                     Ok(config) => {
                         match init_map(config.as_str()) {
                             None => UpdateResult::ParseConfigError,
