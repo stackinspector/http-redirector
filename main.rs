@@ -25,7 +25,7 @@ struct Args {
 async fn main() {
     let Args { port, input, log_path, req_id_header } = argh::from_env();
 
-    let req_id_header = req_id_header.unwrap_or_default();
+    let req_id_header: &'static str = Box::leak(req_id_header.unwrap_or_default().into_boxed_str());
 
     let (wrapped_state, log_sender) = init(input, log_path, req_id_header.clone()).await.unwrap();
     let (tx, rx) = oneshot::channel();
@@ -35,7 +35,8 @@ async fn main() {
         .and(warp::path::param::<String>())
         .and(warp::addr::remote())
         .and(warp::header::optional::<String>("X-Forwarded-For"))
-        .and(warp::header::optional::<String>(Box::leak(req_id_header.into_boxed_str())))
+        .and(warp::header::optional::<String>(req_id_header))
+        .and(warp::header::optional::<String>("User-Agent"))
         .and(warp::any().map(move || wrapped_state.clone()))
         .and(warp::any().map(move || log_sender.clone()))
         .then(handle);

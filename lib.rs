@@ -28,25 +28,31 @@ pub type WrappedState = Arc<RwLock<State>>;
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "type", content = "data")]
+pub enum RequestEvent {
+    Get {
+        hit: bool,
+    },
+    Update {
+        result: UpdateResult,
+    },
+}
+
+#[derive(Serialize, Debug)]
+#[serde(tag = "type", content = "data")]
 pub enum InnerEvent {
     Init {
         ver: String,
         state: State,
-        req_id_header: String,
+        req_id_header: &'static str,
     },
-    Get {
+    Request {
         from: Vec<String>,
         req_id: Option<String>,
+        ua: Option<String>,
         scope: String,
         key: String,
-        hit: bool,
-    },
-    Update {
-        from: Vec<String>,
-        req_id: Option<String>,
-        scope: String,
-        result: UpdateResult,
-    },
+        inner: RequestEvent,
+    }
 }
 
 #[derive(Serialize, Debug)]
@@ -101,7 +107,7 @@ fn log_thread<W: Write + 'static + Send>(mut writer: W) -> LogSender {
     spawn(async move {
         while let Some(event) = rx.recv().await {
             serde_json::to_writer(&mut writer, &event).unwrap();
-            writeln!(writer).unwrap();
+            writer.write_all(b"\n").unwrap();
         }
     });
     tx
@@ -124,7 +130,7 @@ fn init_map(config: &str) -> Option<HashMap<String, String>> {
 pub async fn init(
     input: String,
     log_path: Option<PathBuf>,
-    req_id_header: String,
+    req_id_header: &'static str,
 ) -> anyhow::Result<(WrappedState, LogSender)> {
     let mut state = HashMap::new();
     for pair in input.split(';') {
@@ -158,6 +164,7 @@ pub async fn handle(
     key: String,
     ip: Option<SocketAddr>,
     xff: Option<String>,
+    ua: Option<String>,
     req_id: Option<String>,
     wrapped_state: WrappedState,
     log_sender: LogSender,
@@ -173,10 +180,10 @@ pub async fn handle(
     if let Some(ip) = ip {
         from.push(ip.to_string())
     };
-    if scope == UPDATE_PATH_STR {
-        let scope = key;
+    let (resp, event) = if scope == UPDATE_PATH_STR {
+        let scope = &key;
         let mut state_ref = wrapped_state.write().await;
-        let result = match state_ref.get(&scope) {
+        let result = match state_ref.get(scope) {
             None => UpdateResult::ScopeNotFound,
             Some(scope_state) => {
                 match get(&scope_state.url).await {
@@ -203,18 +210,22 @@ pub async fn handle(
             _ => 500,
         };
         let resp_body = Body::from(serde_json::to_string(&result).unwrap());
-        log_sender.send(Event { time, event: InnerEvent::Update { from, req_id, scope, result } }).unwrap();
-        resp.status(resp_status).header("Content-Type", "application/json; charset=utf-8").body(resp_body).unwrap()
+        let resp = resp.status(resp_status).header("Content-Type", "application/json; charset=utf-8").body(resp_body).unwrap();
+        let event = RequestEvent::Update { result };
+        (resp, event)
     } else {
         let state_ref = wrapped_state.read().await;
         let result = state_ref.get(&scope).and_then(|scope| scope.map.get(&key));
         let hit = result.is_some();
-        log_sender.send(Event { time, event: InnerEvent::Get { from, req_id, scope, key, hit } }).unwrap();
-        match result {
+        let resp = match result {
             None => resp.status(404),
             Some(val) => resp.status(307).header("Location", val),
-        }.body(Body::empty()).unwrap()
-    }
+        }.body(Body::empty()).unwrap();
+        let event = RequestEvent::Get { hit };
+        (resp, event)
+    };
+    log_sender.send(Event { time, event: InnerEvent::Request { from, req_id, scope, key, ua, inner: event } }).unwrap();
+    resp
 }
 
 #[cfg(test)]
