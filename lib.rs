@@ -1,7 +1,8 @@
 use std::{collections::HashMap, io::{self, Write}, fs, path::PathBuf, net::SocketAddr, sync::Arc};
-use tokio::{spawn, sync::{mpsc::{unbounded_channel, UnboundedSender}, RwLock}};
+use dashmap::DashMap;
+use tokio::{spawn, sync::mpsc::{unbounded_channel, UnboundedSender}};
 use serde::Serialize;
-use warp::{http::Response, hyper::Body};
+use warp::{http::{Response, header}, hyper::Body};
 
 const UPDATE_PATH_STR: &str = "__update__";
 
@@ -23,8 +24,8 @@ pub struct Scope {
     pub map: HashMap<String, String>,
 }
 
-pub type State = HashMap<String, Scope>;
-pub type WrappedState = Arc<RwLock<State>>;
+pub type State = DashMap<String, Scope>;
+pub type StateRef = Arc<State>;
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "type", content = "data")]
@@ -131,8 +132,8 @@ pub async fn init(
     input: String,
     log_path: Option<PathBuf>,
     req_id_header: &'static str,
-) -> anyhow::Result<(WrappedState, LogSender)> {
-    let mut state = HashMap::new();
+) -> anyhow::Result<(StateRef, LogSender)> {
+    let state = DashMap::new();
     for pair in input.split(';') {
         let (scope_name, url) = split_kv(pair.split(',')).ok_or_else(|| {
             anyhow::anyhow!("parsing input error")
@@ -156,7 +157,7 @@ pub async fn init(
         state: state.clone(),
         req_id_header,
     } })?;
-    Ok((Arc::new(RwLock::new(state)), log_sender))
+    Ok((Arc::new(state), log_sender))
 }
 
 pub async fn handle(
@@ -166,7 +167,7 @@ pub async fn handle(
     xff: Option<String>,
     ua: Option<String>,
     req_id: Option<String>,
-    wrapped_state: WrappedState,
+    state_ref: StateRef,
     log_sender: LogSender,
 ) -> Response<Body> {
     let time = now();
@@ -182,7 +183,6 @@ pub async fn handle(
     };
     let (resp, event) = if scope == UPDATE_PATH_STR {
         let scope = &key;
-        let mut state_ref = wrapped_state.write().await;
         let result = match state_ref.get(scope) {
             None => UpdateResult::ScopeNotFound,
             Some(scope_state) => {
@@ -210,16 +210,16 @@ pub async fn handle(
             _ => 500,
         };
         let resp_body = Body::from(serde_json::to_string(&result).unwrap());
-        let resp = resp.status(resp_status).header("Content-Type", "application/json; charset=utf-8").body(resp_body).unwrap();
+        let resp = resp.status(resp_status).header(header::CONTENT_TYPE, "application/json; charset=utf-8").body(resp_body).unwrap();
         let event = RequestEvent::Update { result };
         (resp, event)
     } else {
-        let state_ref = wrapped_state.read().await;
-        let result = state_ref.get(&scope).and_then(|scope| scope.map.get(&key));
+        let scope_ref = state_ref.get(&scope);
+        let result = scope_ref.as_deref().and_then(|scope_ref| scope_ref.map.get(&key));
         let hit = result.is_some();
         let resp = match result {
             None => resp.status(404),
-            Some(val) => resp.status(307).header("Location", val),
+            Some(val) => resp.status(307).header(header::LOCATION, val),
         }.body(Body::empty()).unwrap();
         let event = RequestEvent::Get { hit };
         (resp, event)
