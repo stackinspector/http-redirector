@@ -24,7 +24,12 @@ pub struct Scope {
     pub map: HashMap<String, String>,
 }
 
-pub type State = DashMap<String, Scope>;
+#[derive(Serialize, Clone, Debug)]
+pub struct State {
+    scopes: DashMap<String, Scope>,
+    allow_update: bool,
+}
+
 pub type StateRef = Arc<State>;
 
 #[derive(Serialize, Debug)]
@@ -116,8 +121,8 @@ fn log_thread<W: Write + 'static + Send>(mut writer: W) -> LogSender {
 
 fn init_map(config: &str) -> Option<HashMap<String, String>> {
     let mut map = HashMap::new();
-    for line in config.lines().filter(|s| s.is_empty()) {
-        let (key, val) = split_kv(line.split(' ').filter(|s| s.is_empty()))?;
+    for line in config.lines().filter(|s| !s.is_empty()) {
+        let (key, val) = split_kv(line.split(' ').filter(|s| !s.is_empty()))?;
         let val = if val.starts_with("http") {
             val.to_owned()
         } else {
@@ -132,8 +137,9 @@ pub async fn init(
     input: String,
     log_path: Option<PathBuf>,
     req_id_header: &'static str,
+    allow_update: bool,
 ) -> anyhow::Result<(StateRef, LogSender)> {
-    let state = DashMap::new();
+    let scopes = DashMap::new();
     for pair in input.split(';') {
         let (scope_name, url) = split_kv(pair.split(',')).ok_or_else(|| {
             anyhow::anyhow!("parsing input error")
@@ -145,8 +151,9 @@ pub async fn init(
         let map = init_map(config.as_str()).ok_or_else(|| {
             anyhow::anyhow!("parsing config \"{}\" error", url)
         })?;
-        state.insert(scope_name.to_owned(), Scope { url: url.to_owned(), map });
+        scopes.insert(scope_name.to_owned(), Scope { url: url.to_owned(), map });
     }
+    let state = State { scopes, allow_update };
     let log_sender = match log_path {
         Some(path) => log_thread(fs::OpenOptions::new().write(true).create(true).append(true).open(path)?),
         None => log_thread(io::stdout()),
@@ -181,9 +188,9 @@ pub async fn handle(
     if let Some(ip) = ip {
         from.push(ip.to_string())
     };
-    let (resp, event) = if scope == UPDATE_PATH_STR {
+    let (resp, event) = if state_ref.allow_update && (scope == UPDATE_PATH_STR) {
         let scope = &key;
-        let result = match state_ref.get(scope) {
+        let result = match state_ref.scopes.get(scope) {
             None => UpdateResult::ScopeNotFound,
             Some(scope_state) => {
                 match get(&scope_state.url).await {
@@ -196,7 +203,8 @@ pub async fn handle(
                                     url: scope_state.url.clone(),
                                     map,
                                 };
-                                let old = state_ref.insert(scope.clone(), new.clone()).unwrap();
+                                // TODO will always locked
+                                let old = state_ref.scopes.insert(scope.clone(), new.clone()).unwrap();
                                 UpdateResult::Succeed { new, old }
                             },
                         }
@@ -214,7 +222,7 @@ pub async fn handle(
         let event = RequestEvent::Update { result };
         (resp, event)
     } else {
-        let scope_ref = state_ref.get(&scope);
+        let scope_ref = state_ref.scopes.get(&scope);
         let result = scope_ref.as_deref().and_then(|scope_ref| scope_ref.map.get(&key));
         let hit = result.is_some();
         let resp = match result {

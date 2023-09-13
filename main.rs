@@ -19,15 +19,19 @@ struct Args {
     /// request id header name
     #[argh(option, short = 'h')]
     req_id_header: Option<String>,
+    // TODO: cfg
+    /// allow update
+    #[argh(switch, short = 'u')]
+    allow_update: bool,
 }
 
 #[tokio::main]
 async fn main() {
-    let Args { port, input, log_path, req_id_header } = argh::from_env();
+    let Args { port, input, log_path, req_id_header, allow_update } = argh::from_env();
 
     let req_id_header: &'static str = Box::leak(req_id_header.unwrap_or_default().into_boxed_str());
 
-    let (state_ref, log_sender) = init(input, log_path, req_id_header.clone()).await.unwrap();
+    let (state_ref, log_sender) = init(input, log_path, req_id_header.clone(), allow_update).await.unwrap();
     let (tx, rx) = oneshot::channel();
 
     let route = warp::get()
