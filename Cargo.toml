@@ -1,6 +1,6 @@
 [package]
 name = "http-redirector"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 authors = ["stackinspector"]
 license = "MIT"
@@ -19,7 +19,6 @@ path = "main.rs"
 [dependencies]
 argh = "0.1"
 anyhow = "1"
-dashmap = { version = "5", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
