@@ -39,8 +39,8 @@ async fn main() {
         .and(warp::path::param::<String>())
         .and(warp::addr::remote())
         .and(warp::header::optional::<String>("X-Forwarded-For"))
-        .and(warp::header::optional::<String>(req_id_header))
         .and(warp::header::optional::<String>("User-Agent"))
+        .and(warp::header::optional::<String>(req_id_header))
         .and(warp::any().map(move || state_ref.clone()))
         .and(warp::any().map(move || log_sender.clone()))
         .then(handle);
