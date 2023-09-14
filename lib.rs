@@ -122,7 +122,7 @@ fn init_map(config: &str) -> Option<HashMap<String, String>> {
     let mut map = HashMap::new();
     for line in config.lines().filter(|s| !s.is_empty()) {
         let (key, val) = split_kv(line.split(' ').filter(|s| !s.is_empty()))?;
-        let val = if val.starts_with("http") {
+        let val = if val.starts_with("http://") {
             val.to_owned()
         } else {
             format!("https://{}", val)
