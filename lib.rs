@@ -1,5 +1,6 @@
 use std::{collections::HashMap, io::{self, Write}, fs, path::PathBuf, net::SocketAddr, sync::Arc, borrow::Cow, convert::Infallible};
 use serde::Serialize;
+use dashmap::DashMap;
 use hyper::{http::{Request, Response, header, Method, StatusCode}, Body};
 
 const UPDATE_PATH_STR: &str = "__update__";
@@ -24,7 +25,7 @@ pub struct Scope {
 
 #[derive(Serialize, Clone, Debug)]
 pub struct State {
-    scopes: HashMap<String, Scope>,
+    scopes: DashMap<String, Scope>,
     allow_update: bool,
 }
 
@@ -177,7 +178,7 @@ impl Context {
         allow_update: bool,
     ) -> anyhow::Result<(Context, LogCloser)> {
         let req_id_header = req_id_header.map(Arc::from);
-        let mut scopes = HashMap::new();
+        let scopes = DashMap::new();
         for pair in input.split(';') {
             let (scope_name, url) = split_kv(pair.split(',')).ok_or_else(|| {
                 anyhow::anyhow!("parsing input error")
@@ -261,7 +262,40 @@ impl Context {
             }
         };
         from.push(Cow::Owned(remote_addr.to_string()));
-        let (resp, event) = {
+        let (resp, event) = if state_ref.allow_update && (scope == UPDATE_PATH_STR) {
+            let scope = key;
+            let result = match state_ref.scopes.get(scope) {
+                None => UpdateResult::ScopeNotFound,
+                Some(scope_state) => {
+                    match get(&scope_state.url).await {
+                        Err(error) => UpdateResult::GetConfigError(error.to_string()),
+                        Ok(config) => {
+                            match init_map(config.as_str()) {
+                                None => UpdateResult::ParseConfigError,
+                                Some(map) => {
+                                    let new = Scope {
+                                        url: scope_state.url.clone(),
+                                        map,
+                                    };
+                                    // TODO will always locked
+                                    let old = state_ref.scopes.insert(scope.to_owned(), new.clone()).unwrap();
+                                    UpdateResult::Succeed { new, old }
+                                },
+                            }
+                        },
+                    }
+                },
+            };
+            let resp_status = match result {
+                UpdateResult::Succeed { .. } => 200,
+                UpdateResult::ScopeNotFound => 404,
+                _ => 500,
+            };
+            let resp_body = Body::from(serde_json::to_string(&result).unwrap());
+            let resp = resp.status(resp_status).header(header::CONTENT_TYPE, "application/json; charset=utf-8").body(resp_body).unwrap();
+            let event = RequestEvent::Update { result };
+            (resp, event)
+        } else {
             let scope_ref = state_ref.scopes.get(scope);
             let result = scope_ref.as_deref().and_then(|scope_ref| scope_ref.map.get(key));
             let hit = result.is_some();
