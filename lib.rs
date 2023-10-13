@@ -1,6 +1,6 @@
 use std::{collections::HashMap, io::{self, Write}, fs, path::PathBuf, net::SocketAddr, sync::Arc, borrow::Cow, convert::Infallible};
 use serde::Serialize;
-use dashmap::DashMap;
+use tokio::sync::RwLock;
 use hyper::{http::{Request, Response, header, Method, StatusCode}, Body};
 
 const UPDATE_PATH_STR: &str = "__update__";
@@ -25,11 +25,11 @@ pub struct Scope {
 
 #[derive(Serialize, Clone, Debug)]
 pub struct State {
-    scopes: DashMap<String, Scope>,
+    scopes: HashMap<String, Scope>,
     allow_update: bool,
 }
 
-pub type StateRef = Arc<State>;
+pub type StateRef = Arc<RwLock<State>>;
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "type", content = "data")]
@@ -177,7 +177,7 @@ impl Context {
         allow_update: bool,
     ) -> anyhow::Result<(Context, LogCloser)> {
         let req_id_header = req_id_header.map(Arc::from);
-        let scopes = DashMap::new();
+        let mut scopes = HashMap::new();
         for pair in input.split(';') {
             let (scope_name, url) = split_kv(pair.split(',')).ok_or_else(|| {
                 anyhow::anyhow!("parsing input error")
@@ -206,7 +206,7 @@ impl Context {
         // TODO should wait for log writed? (actor's default behavior)
         log_sender.request(serde_json::to_string(&event).unwrap()).await?;
         Ok((Context {
-            state_ref: Arc::new(state),
+            state_ref: Arc::new(RwLock::new(state)),
             log_sender: log_sender.clone(),
             req_id_header,
         }, LogCloser {
@@ -261,7 +261,8 @@ impl Context {
             }
         };
         from.push(Cow::Owned(remote_addr.to_string()));
-        let (resp, event) = if state_ref.allow_update && (scope == UPDATE_PATH_STR) {
+        let (resp, event) = if state_ref.read().await.allow_update && (scope == UPDATE_PATH_STR) {
+            let mut state_ref = state_ref.write().await;
             let scope = key;
             let result = match state_ref.scopes.get(scope) {
                 None => UpdateResult::ScopeNotFound,
@@ -296,6 +297,7 @@ impl Context {
             let event = RequestEvent::Update { result };
             (resp, event)
         } else {
+            let state_ref = state_ref.read().await;
             let scope_ref = state_ref.scopes.get(scope);
             let result = scope_ref.as_deref().and_then(|scope_ref| scope_ref.map.get(key));
             let hit = result.is_some();
