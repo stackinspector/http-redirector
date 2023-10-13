@@ -1,6 +1,6 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, convert::Infallible};
+use hyper::{Server, service::{make_service_fn, service_fn}, server::conn::AddrStream};
 use tokio::{spawn, signal, sync::oneshot};
-use warp::Filter;
 use http_redirector::*;
 
 // #[argh(description = r#"concat!(env!("CARGO_PKG_DESCRIPTION"), "\nsee https://github.com/stackinspector/http-redirector")"#)]
@@ -28,29 +28,21 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let Args { port, input, log_path, req_id_header } = argh::from_env();
+    let ctx = Context::init(input, log_path, req_id_header, false).await.unwrap();
+    let (tx, rx) = oneshot::channel::<()>();
 
-    let req_id_header: &'static str = Box::leak(req_id_header.unwrap_or_default().into_boxed_str());
+    let make_service = make_service_fn(move |conn: &AddrStream| {
+        let remote_addr = conn.remote_addr();
+        let ctx = ctx.clone();
+        let service = service_fn(move |req| ctx.clone().handle(remote_addr, req));
+        async move { Ok::<_, Infallible>(service) }
+    });
 
-    let (state_ref, log_sender) = init(input, log_path, req_id_header.clone(), false).await.unwrap();
-    let (tx, rx) = oneshot::channel();
+    let server = Server::bind(&([0, 0, 0, 0], port).into())
+        .serve(make_service)
+        .with_graceful_shutdown(async { rx.await.unwrap(); });
 
-    let route = warp::get()
-        .and(warp::path::param::<String>())
-        .and(warp::path::param::<String>())
-        .and(warp::addr::remote())
-        .and(warp::header::optional::<String>("X-Forwarded-For"))
-        .and(warp::header::optional::<String>("User-Agent"))
-        .and(warp::header::optional::<String>(req_id_header))
-        .and(warp::any().map(move || state_ref.clone()))
-        .and(warp::any().map(move || log_sender.clone()))
-        .then(handle);
-
-    let (_addr, server) = warp::serve(route).bind_with_graceful_shutdown(
-        ([0, 0, 0, 0], port),
-        async { rx.await.unwrap(); }
-    );
-
-    spawn(server);
+    spawn(async { server.await.unwrap() });
 
     signal::ctrl_c().await.unwrap();
     tx.send(()).unwrap();
