@@ -70,7 +70,6 @@ pub struct Event<'a> {
 #[serde(tag = "type", content = "data")]
 pub enum UpdateResult {
     Succeed {
-        // TODO &'a when put back update
         new: Scope,
         old: Scope,
     },
@@ -218,7 +217,7 @@ impl Context {
     pub async fn handle(self, remote_addr: SocketAddr, req: Request<Body>) -> Result<Response<Body>, Infallible> {
         // TODO if Err is not ! then empty response??
         let Context { state_ref, log_sender, req_id_header } = self;
-        let resp = Response::builder();
+                let resp = Response::builder();
 
         macro_rules! err {
             ($status:tt) => {
@@ -273,6 +272,7 @@ impl Context {
                             match init_map(config.as_str()) {
                                 None => UpdateResult::ParseConfigError,
                                 Some(map) => {
+                                    // TODO serialize before insert
                                     let new = Scope {
                                         url: scope_state.url.clone(),
                                         map,
