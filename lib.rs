@@ -1,5 +1,4 @@
 use std::{collections::HashMap, io::{self, Write}, fs, path::PathBuf, net::SocketAddr, sync::Arc, borrow::Cow, convert::Infallible};
-use tokio::{spawn, sync::mpsc::{unbounded_channel, UnboundedSender}};
 use serde::Serialize;
 use hyper::{http::{Request, Response, header, Method, StatusCode}, Body};
 
@@ -107,20 +106,44 @@ async fn get(url: &str) -> anyhow::Result<String> {
     }
 }
 
-// TODO tokio-actor = { git = "https://github.com/Berylsoft/actor" }
+struct LogContext {
+    // TODO(actor): let Handle not need Context's generics
+    writer: Box<dyn Write + 'static + Send>,
+}
 
-pub type LogSender = UnboundedSender<String>;
+impl LogContext {
+    // use SyncInitContext leads to unconstrained type parameter
+    fn init<W: Write + 'static + Send>(writer: W) -> LogContext {
+        LogContext { writer: Box::new(writer) }
+    }
+}
 
-fn log_thread<W: Write + 'static + Send>(mut writer: W) -> LogSender {
-    let (tx, mut rx) = unbounded_channel::<String>();
-    spawn(async move {
-        while let Some(event) = rx.recv().await {
-            let mut line = event.into_bytes();
-            line.push(b'\n');
-            writer.write_all(&line).unwrap();
-        }
-    });
-    tx
+impl actor_core::Context for LogContext {
+    type Req = String;
+    type Res = ();
+    type Err = anyhow::Error;
+
+    fn exec(&mut self, req: Self::Req) -> Result<Self::Res, Self::Err> {
+        let mut line = req.into_bytes();
+        line.push(b'\n');
+        self.writer.write_all(&line)?;
+        Ok(())
+    }
+
+    fn close(mut self) -> Result<(), Self::Err> {
+        Ok(self.writer.flush()?)
+    }
+}
+
+pub struct LogCloser {
+    // similar problem: LogContext should be public if not wrap
+    handle: tokio_actor::Handle<LogContext>,
+}
+
+impl LogCloser {
+    pub async fn wait_close(self) -> Result<(), anyhow::Error> {
+        Ok(self.handle.wait_close().await?)
+    }
 }
 
 fn init_map(config: &str) -> Option<HashMap<String, String>> {
@@ -142,7 +165,7 @@ fn init_map(config: &str) -> Option<HashMap<String, String>> {
 #[derive(Clone)]
 pub struct Context {
     state_ref: StateRef,
-    log_sender: LogSender,
+    log_sender: tokio_actor::Handle<LogContext>,
     req_id_header: Option<Arc<str>>,
 }
 
@@ -152,7 +175,7 @@ impl Context {
         log_path: Option<PathBuf>,
         req_id_header: Option<String>,
         allow_update: bool,
-    ) -> anyhow::Result<Context> {
+    ) -> anyhow::Result<(Context, LogCloser)> {
         let req_id_header = req_id_header.map(Arc::from);
         let mut scopes = HashMap::new();
         for pair in input.split(';') {
@@ -169,22 +192,26 @@ impl Context {
             scopes.insert(scope_name.to_owned(), Scope { url: url.to_owned(), map });
         }
         let state = State { scopes, allow_update };
-        let log_sender = match log_path {
-            Some(path) => log_thread(fs::OpenOptions::new().write(true).create(true).append(true).open(path)?),
-            None => log_thread(io::stdout()),
+        let log_context = match log_path {
+            Some(path) => LogContext::init(fs::OpenOptions::new().write(true).create(true).append(true).open(path)?),
+            None => LogContext::init(io::stdout()),
         };
+        let log_sender = tokio_actor::spawn(log_context);
         let time = now();
         let event = Event { time, event: InnerEvent::Init {
             ver: env!("CARGO_PKG_VERSION"),
             state: &state,
             req_id_header: req_id_header.as_deref(),
         } };
-        log_sender.send(serde_json::to_string(&event).unwrap())?;
-        Ok(Context {
+        // TODO should wait for log writed? (actor's default behavior)
+        log_sender.request(serde_json::to_string(&event).unwrap()).await?;
+        Ok((Context {
             state_ref: Arc::new(state),
-            log_sender,
+            log_sender: log_sender.clone(),
             req_id_header,
-        })
+        }, LogCloser {
+            handle: log_sender
+        }))
     }
 
     pub async fn handle(self, remote_addr: SocketAddr, req: Request<Body>) -> Result<Response<Body>, Infallible> {
@@ -246,7 +273,7 @@ impl Context {
             (resp, event)
         };
         let event = Event { time, event: InnerEvent::Request { from, req_id, scope, key, ua, inner: event } };
-        log_sender.send(serde_json::to_string(&event).unwrap()).unwrap();
+        log_sender.request(serde_json::to_string(&event).unwrap()).await.unwrap(); // ok?
         Ok(resp)
     }
 }

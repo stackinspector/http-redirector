@@ -28,7 +28,7 @@ struct Args {
 #[tokio::main]
 async fn main() {
     let Args { port, input, log_path, req_id_header } = argh::from_env();
-    let ctx = Context::init(input, log_path, req_id_header, false).await.unwrap();
+    let (ctx, log_closer) = Context::init(input, log_path, req_id_header, false).await.unwrap();
     let (tx, rx) = oneshot::channel::<()>();
 
     let make_service = make_service_fn(move |conn: &AddrStream| {
@@ -45,5 +45,7 @@ async fn main() {
     spawn(async { server.await.unwrap() });
 
     signal::ctrl_c().await.unwrap();
+    // TODO wait for close finished (actor's and correct behavior)
     tx.send(()).unwrap();
+    log_closer.wait_close().await.unwrap();
 }
