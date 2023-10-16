@@ -23,12 +23,7 @@ pub struct Scope {
     pub map: HashMap<String, String>,
 }
 
-#[derive(Serialize, Clone, Debug)]
-pub struct State {
-    scopes: HashMap<String, Scope>,
-    // TODO move to Context
-    allow_update: bool,
-}
+pub type State = HashMap<String, Scope>;
 
 pub type StateRef = Arc<RwLock<State>>;
 
@@ -50,6 +45,7 @@ pub enum InnerEvent<'a> {
         ver: &'a str,
         state: &'a State,
         req_id_header: Option<&'a str>,
+        allow_update: bool,
     },
     Request {
         from: Vec<Cow<'a, str>>,
@@ -168,6 +164,7 @@ pub struct Context {
     state_ref: StateRef,
     log_sender: tokio_actor::Handle<LogContext>,
     req_id_header: Option<Arc<str>>,
+    allow_update: bool,
 }
 
 impl Context {
@@ -178,7 +175,7 @@ impl Context {
         allow_update: bool,
     ) -> anyhow::Result<(Context, LogCloser)> {
         let req_id_header = req_id_header.map(Arc::from);
-        let mut scopes = HashMap::new();
+        let mut state = HashMap::new();
         for pair in input.split(';') {
             let (scope_name, url) = split_kv(pair.split(',')).ok_or_else(|| {
                 anyhow::anyhow!("parsing input error")
@@ -190,9 +187,8 @@ impl Context {
             let map = init_map(config.as_str()).ok_or_else(|| {
                 anyhow::anyhow!("parsing config \"{}\" error", url)
             })?;
-            scopes.insert(scope_name.to_owned(), Scope { url: url.to_owned(), map });
+            state.insert(scope_name.to_owned(), Scope { url: url.to_owned(), map });
         }
-        let state = State { scopes, allow_update };
         let log_context = match log_path {
             Some(path) => LogContext::init(fs::OpenOptions::new().write(true).create(true).append(true).open(path)?),
             None => LogContext::init(io::stdout()),
@@ -203,6 +199,7 @@ impl Context {
             ver: env!("CARGO_PKG_VERSION"),
             state: &state,
             req_id_header: req_id_header.as_deref(),
+            allow_update,
         } };
         // TODO should wait for log writed? (actor's default behavior)
         log_sender.request(serde_json::to_string(&event).unwrap()).await?;
@@ -210,6 +207,7 @@ impl Context {
             state_ref: Arc::new(RwLock::new(state)),
             log_sender: log_sender.clone(),
             req_id_header,
+            allow_update,
         }, LogCloser {
             handle: log_sender
         }))
@@ -217,7 +215,7 @@ impl Context {
 
     pub async fn handle(self, remote_addr: SocketAddr, req: Request<Body>) -> Result<Response<Body>, Infallible> {
         // TODO if Err is not ! then empty response??
-        let Context { state_ref, log_sender, req_id_header } = self;
+        let Context { state_ref, log_sender, req_id_header, allow_update } = self;
         let resp = Response::builder();
 
         macro_rules! err {
@@ -262,10 +260,10 @@ impl Context {
             }
         };
         from.push(Cow::Owned(remote_addr.to_string()));
-        let (resp, event) = if state_ref.read().await.allow_update && (scope == UPDATE_PATH_STR) {
+        let (resp, event) = if allow_update && (scope == UPDATE_PATH_STR) {
             let mut state_ref = state_ref.write().await;
             let scope = key;
-            let result = match state_ref.scopes.get(scope) {
+            let result = match state_ref.get(scope) {
                 None => UpdateResult::ScopeNotFound,
                 Some(scope_state) => {
                     match get(&scope_state.url).await {
@@ -280,7 +278,7 @@ impl Context {
                                         map,
                                     };
                                     // TODO will always locked
-                                    let old = state_ref.scopes.insert(scope.to_owned(), new.clone()).unwrap();
+                                    let old = state_ref.insert(scope.to_owned(), new.clone()).unwrap();
                                     UpdateResult::Succeed { new, old }
                                 },
                             }
@@ -299,7 +297,7 @@ impl Context {
             (resp, event)
         } else {
             let state_ref = state_ref.read().await;
-            let scope_ref = state_ref.scopes.get(scope);
+            let scope_ref = state_ref.get(scope);
             let result = scope_ref.as_deref().and_then(|scope_ref| scope_ref.map.get(key));
             let hit = result.is_some();
             let resp = match result {
