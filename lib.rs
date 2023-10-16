@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::{self, Write}, fs, path::PathBuf, net::SocketAddr, sync::Arc, borrow::Cow, convert::Infallible};
+use std::{collections::HashMap, io::{self, Write}, fs, path::PathBuf, net::SocketAddr, sync::{Arc, OnceLock}, borrow::Cow, convert::Infallible};
 use serde::Serialize;
 use tokio::sync::RwLock;
 use hyper::{http::{Request, Response, header, Method, StatusCode}, Body};
@@ -26,6 +26,7 @@ pub struct Scope {
 #[derive(Serialize, Clone, Debug)]
 pub struct State {
     scopes: HashMap<String, Scope>,
+    // TODO move to Context
     allow_update: bool,
 }
 
@@ -80,6 +81,8 @@ pub enum UpdateResult {
 
 type HttpClient = hyper::Client<hyper_rustls::HttpsConnector<hyper::client::connect::HttpConnector>>;
 
+const HTTP_CLIENT: OnceLock<HttpClient> = OnceLock::new();
+
 fn build_http_client() -> HttpClient {
     let connector = hyper_rustls::HttpsConnectorBuilder::new()
         .with_webpki_roots()
@@ -91,9 +94,7 @@ fn build_http_client() -> HttpClient {
 
 async fn get(url: &str) -> anyhow::Result<String> {
     if url.starts_with("http") {
-        // TODO add to Context when put back update
-        let client = build_http_client();
-        let resp = client.get(url.parse()?).await?;
+        let resp = HTTP_CLIENT.get_or_init(build_http_client).get(url.parse()?).await?;
         let status = resp.status().as_u16();
         if status == 200 {
             let bytes = hyper::body::to_bytes(resp.into_body()).await?;
@@ -217,7 +218,7 @@ impl Context {
     pub async fn handle(self, remote_addr: SocketAddr, req: Request<Body>) -> Result<Response<Body>, Infallible> {
         // TODO if Err is not ! then empty response??
         let Context { state_ref, log_sender, req_id_header } = self;
-                let resp = Response::builder();
+        let resp = Response::builder();
 
         macro_rules! err {
             ($status:tt) => {
