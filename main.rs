@@ -38,14 +38,14 @@ async fn main() {
         async move { Ok::<_, Infallible>(service) }
     });
 
-    let server = Server::bind(&([0, 0, 0, 0], port).into())
+    let server_handle = spawn(Server::bind(&([0, 0, 0, 0], port).into())
         .serve(make_service)
-        .with_graceful_shutdown(async { rx.await.unwrap(); });
-
-    spawn(async { server.await.unwrap() });
+        .with_graceful_shutdown(async { rx.await.unwrap(); }));
 
     signal::ctrl_c().await.unwrap();
-    // TODO wait for close finished (actor's and correct behavior)
     tx.send(()).unwrap();
-    log_closer.wait_close().await.unwrap();
+    tokio::join!(
+        async { server_handle.await.unwrap().unwrap() },
+        async { log_closer.wait_close().await.unwrap() }
+    );
 }
