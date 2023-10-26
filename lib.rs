@@ -267,7 +267,7 @@ impl Context {
         let (resp, event) = if *allow_update && (scope == update_key.as_deref().unwrap_or(UPDATE_PATH_STR)) {
             let mut state_ref = state_ref.write().await;
             let scope = key;
-            let result = match state_ref.get(scope) {
+            let result = match state_ref.get_mut(scope) {
                 None => UpdateResult::ScopeNotFound,
                 Some(scope_state) => {
                     match get(http_client, &scope_state.url).await {
@@ -281,8 +281,7 @@ impl Context {
                                         url: scope_state.url.clone(),
                                         map,
                                     };
-                                    // TODO will always locked
-                                    let old = state_ref.insert(scope.to_owned(), new.clone()).unwrap();
+                                    let old = core::mem::replace(scope_state, new.clone());
                                     UpdateResult::Succeed { new, old }
                                 },
                             }
