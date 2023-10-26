@@ -19,18 +19,16 @@ fn split_kv<'a, I: Iterator<Item = &'a str>>(mut iter: I) -> Option<(&'a str, &'
 }
 
 #[derive(Serialize, Clone, Debug)]
-pub struct Scope {
-    pub url: String,
-    pub map: HashMap<String, String>,
+struct Scope {
+    url: String,
+    map: HashMap<String, String>,
 }
 
-pub type State = HashMap<String, Scope>;
-
-pub type StateRef = Arc<RwLock<State>>;
+type State = HashMap<String, Scope>;
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "type", content = "data")]
-pub enum RequestEvent {
+enum RequestEvent {
     Get {
         hit: bool,
     },
@@ -41,7 +39,7 @@ pub enum RequestEvent {
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "type", content = "data")]
-pub enum InnerEvent<'a> {
+enum InnerEvent<'a> {
     Init {
         ver: &'a str,
         state: &'a State,
@@ -60,14 +58,14 @@ pub enum InnerEvent<'a> {
 }
 
 #[derive(Serialize, Debug)]
-pub struct Event<'a> {
+struct Event<'a> {
     time: u64,
     event: InnerEvent<'a>,
 }
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "type", content = "data")]
-pub enum UpdateResult {
+enum UpdateResult {
     Succeed {
         new: Scope,
         old: Scope,
