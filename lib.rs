@@ -46,6 +46,7 @@ pub enum InnerEvent<'a> {
         ver: &'a str,
         state: &'a State,
         req_id_header: Option<&'a str>,
+        update_key: Option<&'a str>,
         allow_update: bool,
     },
     Request {
@@ -162,6 +163,7 @@ pub struct Context {
     state_ref: RwLock<State>,
     log_sender: tokio_actor::Handle<LogContext>,
     req_id_header: Option<String>,
+    update_key: Option<String>,
     http_client: OnceLock<HttpClient>,
     allow_update: bool,
 }
@@ -171,16 +173,18 @@ impl Context {
         input: String,
         log_path: Option<PathBuf>,
         req_id_header: Option<String>,
+        update_key: Option<String>,
         allow_update: bool,
     ) -> anyhow::Result<(Arc<Context>, LogCloser)> {
+        let update_key_ref = update_key.as_deref().unwrap_or(UPDATE_PATH_STR);
         let http_client = OnceLock::new();
         let mut state = HashMap::new();
         for pair in input.split(';') {
             let (scope_name, url) = split_kv(pair.split(',')).ok_or_else(|| {
                 anyhow::anyhow!("parsing input error")
             })?;
-            if scope_name == UPDATE_PATH_STR {
-                return Err(anyhow::anyhow!("scope name should not be \"{}\"", UPDATE_PATH_STR))
+            if scope_name == update_key_ref {
+                return Err(anyhow::anyhow!("scope name should not be \"{}\"", update_key_ref))
             }
             let config = get(&http_client, url).await?;
             let map = init_map(config.as_str()).ok_or_else(|| {
@@ -198,6 +202,7 @@ impl Context {
             ver: env!("CARGO_PKG_VERSION"),
             state: &state,
             req_id_header: req_id_header.as_deref(),
+            update_key: update_key.as_deref(),
             allow_update,
         } };
         // TODO should wait for log writed? (actor's default behavior)
@@ -206,6 +211,7 @@ impl Context {
             state_ref: RwLock::new(state),
             log_sender: log_sender.clone(),
             req_id_header,
+            update_key,
             http_client,
             allow_update,
         }), LogCloser {
@@ -215,7 +221,7 @@ impl Context {
 
     pub async fn handle(self: Arc<Self>, remote_addr: SocketAddr, req: Request<Body>) -> Result<Response<Body>, Infallible> {
         // TODO if Err is not ! then empty response??
-        let Context { state_ref, log_sender, req_id_header, http_client, allow_update } = self.as_ref();
+        let Context { state_ref, log_sender, req_id_header, update_key, http_client, allow_update } = self.as_ref();
         let resp = Response::builder();
 
         macro_rules! err {
@@ -260,7 +266,7 @@ impl Context {
             }
         };
         from.push(Cow::Owned(remote_addr.to_string()));
-        let (resp, event) = if *allow_update && (scope == UPDATE_PATH_STR) {
+        let (resp, event) = if *allow_update && (scope == update_key.as_deref().unwrap_or(UPDATE_PATH_STR)) {
             let mut state_ref = state_ref.write().await;
             let scope = key;
             let result = match state_ref.get(scope) {

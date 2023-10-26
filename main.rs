@@ -19,6 +19,9 @@ struct Args {
     /// request id header name
     #[argh(option, short = 'h')]
     req_id_header: Option<String>,
+    /// update key
+    #[argh(option, short = 'k')]
+    update_key: Option<String>,
     // TODO: cfg
     /// allow update
     #[argh(switch, short = 'u')]
@@ -27,8 +30,8 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    let Args { port, input, log_path, req_id_header, allow_update } = argh::from_env();
-    let (ctx, log_closer) = Context::init(input, log_path, req_id_header, allow_update).await.unwrap();
+    let Args { port, input, log_path, req_id_header, update_key, allow_update } = argh::from_env();
+    let (ctx, log_closer) = Context::init(input, log_path, req_id_header, update_key, allow_update).await.unwrap();
     let (tx, rx) = oneshot::channel::<()>();
 
     let make_service = make_service_fn(move |conn: &AddrStream| {
