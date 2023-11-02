@@ -28,12 +28,12 @@ type State = HashMap<String, Scope>;
 
 #[derive(Serialize, Debug)]
 #[serde(tag = "type", content = "data")]
-enum RequestEvent {
+enum RequestEvent<'a> {
     Get {
         hit: bool,
     },
     Update {
-        result: UpdateResult,
+        result: &'a UpdateResult,
     },
 }
 
@@ -53,7 +53,7 @@ enum InnerEvent<'a> {
         ua: Option<&'a str>,
         scope: &'a str,
         key: &'a str,
-        inner: RequestEvent,
+        inner: RequestEvent<'a>,
     }
 }
 
@@ -245,25 +245,37 @@ impl Context {
         // TODO if Err is not ! then empty response??
         let resp = Response::builder();
 
-        macro_rules! reject {
+        macro_rules! empty {
             ($status:tt) => {
                 return Ok(resp.status(StatusCode::$status).body(Body::empty()).unwrap())
             };
         }
 
+        macro_rules! redirect {
+            ($url:expr) => {
+                return Ok(resp.status(307).header(header::LOCATION, $url).body(Body::empty()).unwrap())
+            };
+        }
+
         macro_rules! json {
             ($status:expr, $json:expr) => {
-                resp.status($status).header(header::CONTENT_TYPE, "application/json; charset=utf-8").body(Body::from(serde_json::to_string(&$json).unwrap())).unwrap()
+                return Ok(resp.status($status).header(header::CONTENT_TYPE, "application/json; charset=utf-8").body(Body::from(serde_json::to_string(&$json).unwrap())).unwrap())
+            };
+        }
+
+        macro_rules! text {
+            ($status:expr, $text:expr) => {
+                return Ok(resp.status($status).header(header::CONTENT_TYPE, "text/plain; charset=utf-8").body(Body::from($text)).unwrap())
             };
         }
 
         if req.method() != Method::GET {
-            reject!(METHOD_NOT_ALLOWED);
+            empty!(METHOD_NOT_ALLOWED);
         }
 
         // TODO: record not matched request?
         let Some((scope, key)) = split_kv(req.uri().path().split('/').skip(1).take(2)) else {
-            reject!(NOT_FOUND);
+            empty!(NOT_FOUND);
         };
 
         macro_rules! header {
@@ -271,7 +283,7 @@ impl Context {
                 match req.headers().get($key) {
                     Some(v) => match v.to_str() {
                         Ok(v) => Some(v),
-                        Err(_) => reject!(BAD_REQUEST),
+                        Err(_) => empty!(BAD_REQUEST),
                     },
                     None => None,
                 }
@@ -293,7 +305,15 @@ impl Context {
             }
         };
         from.push(Cow::Owned(remote_addr.to_string()));
-        let (resp, event) = if self.allow_update && (scope == self.update_key.as_deref().unwrap_or(UPDATE_PATH_STR)) {
+
+        macro_rules! log {
+            ($event:expr) => {{
+                let event = Event { time, event: InnerEvent::Request { from, req_id, scope, key, ua, inner: $event } };
+                self.log_sender.request(serde_json::to_string(&event).unwrap()).await.unwrap(); // ok?
+            }};
+        }
+
+        if self.allow_update && (scope == self.update_key.as_deref().unwrap_or(UPDATE_PATH_STR)) {
             let scope = key;
             let result = self.update(scope).await;
             let resp_status = match result {
@@ -301,24 +321,25 @@ impl Context {
                 UpdateResult::ScopeNotFound => 404,
                 _ => 500,
             };
-            let resp = json!(resp_status, result);
-            let event = RequestEvent::Update { result };
-            (resp, event)
+            log!(RequestEvent::Update { result: &result });
+            json!(resp_status, result);
         } else {
             let state_ref = self.state_ref.read().await;
             let scope_ref = state_ref.get(scope);
             let result = scope_ref.as_deref().and_then(|scope_ref| scope_ref.map.get(key));
             let hit = result.is_some();
-            let resp = match result {
-                None => resp.status(404),
-                Some(val) => resp.status(307).header(header::LOCATION, val),
-            }.body(Body::empty()).unwrap();
-            let event = RequestEvent::Get { hit };
-            (resp, event)
-        };
-        let event = Event { time, event: InnerEvent::Request { from, req_id, scope, key, ua, inner: event } };
-        self.log_sender.request(serde_json::to_string(&event).unwrap()).await.unwrap(); // ok?
-        Ok(resp)
+            log!(RequestEvent::Get { hit });
+            match result {
+                None => empty!(NOT_FOUND),
+                Some(val) => {
+                    if self.return_value {
+                        text!(StatusCode::OK, val.clone());
+                    } else {
+                        redirect!(val);
+                    }
+                },
+            };
+        }
     }
 }
 
