@@ -29,12 +29,15 @@ struct Args {
     /// allow update
     #[argh(switch, short = 'v')]
     return_value: bool,
+    /// allow update
+    #[argh(switch, short = 'f')]
+    no_fill_https: bool,
 }
 
 #[tokio::main]
 async fn main() {
-    let Args { port, input, log_path, req_id_header, update_key, allow_update, return_value } = argh::from_env();
-    let (ctx, log_closer) = Context::init(input, log_path, req_id_header, update_key, allow_update, return_value).await.unwrap();
+    let Args { port, input, log_path, req_id_header, update_key, allow_update, return_value, no_fill_https } = argh::from_env();
+    let (ctx, log_closer) = Context::init(input, log_path, req_id_header, update_key, allow_update, return_value, no_fill_https).await.unwrap();
     let (tx, rx) = oneshot::channel::<()>();
 
     let make_service = make_service_fn(move |conn: &AddrStream| {

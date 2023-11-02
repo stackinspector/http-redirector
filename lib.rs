@@ -141,11 +141,11 @@ impl LogCloser {
     }
 }
 
-fn init_map(config: &str) -> Option<HashMap<String, String>> {
+fn init_map(config: &str, no_fill_https: bool) -> Option<HashMap<String, String>> {
     let mut map = HashMap::new();
     for line in config.lines().filter(|s| !s.is_empty()) {
         let (key, val) = split_kv(line.split(' ').filter(|s| !s.is_empty()))?;
-        let val = if val.starts_with("http://") {
+        let val = if val.starts_with("http://") || no_fill_https {
             val.to_owned()
         } else {
             format!("https://{}", val)
@@ -165,6 +165,7 @@ pub struct Context {
     http_client: OnceLock<HttpClient>,
     allow_update: bool,
     return_value: bool,
+    no_fill_https: bool,
 }
 
 impl Context {
@@ -175,6 +176,7 @@ impl Context {
         update_key: Option<String>,
         allow_update: bool,
         return_value: bool,
+        no_fill_https: bool,
     ) -> anyhow::Result<(Arc<Context>, LogCloser)> {
         let update_key_ref = update_key.as_deref().unwrap_or(UPDATE_PATH_STR);
         let http_client = OnceLock::new();
@@ -187,7 +189,7 @@ impl Context {
                 return Err(anyhow::anyhow!("scope name should not be \"{}\"", update_key_ref))
             }
             let config = get(&http_client, url).await?;
-            let map = init_map(config.as_str()).ok_or_else(|| {
+            let map = init_map(config.as_str(), no_fill_https).ok_or_else(|| {
                 anyhow::anyhow!("parsing config \"{}\" error", url)
             })?;
             state.insert(scope_name.to_owned(), Scope { url: url.to_owned(), map });
@@ -215,6 +217,7 @@ impl Context {
             http_client,
             allow_update,
             return_value,
+            no_fill_https,
         }), LogCloser {
             handle: log_sender
         }))
@@ -229,7 +232,7 @@ impl Context {
             Err(error) => return UpdateResult::GetConfigError(error.to_string()),
             Ok(config) => config,
         };
-        let Some(map) = init_map(config.as_str()) else {
+        let Some(map) = init_map(config.as_str(), self.no_fill_https) else {
             return UpdateResult::ParseConfigError;
         };
         // TODO serialize before insert
@@ -356,7 +359,7 @@ trpl-cn kaisery.github.io/trpl-zh-cn/
 
     #[test]
     fn happypath() {
-        let map = init_map(EXAMPLE_CONFIG).unwrap();
+        let map = init_map(EXAMPLE_CONFIG, false).unwrap();
         assert_eq!(
             map.get("rust").unwrap().as_str(),
             "https://www.rust-lang.org/"
@@ -370,12 +373,12 @@ trpl-cn kaisery.github.io/trpl-zh-cn/
     #[test]
     fn config_redundant_value() {
         let config = "key val redundance\nkey val";
-        matches!(init_map(config), None);
+        matches!(init_map(config, false), None);
     }
 
     #[test]
     fn config_lack_value() {
         let config = "key val\nkey";
-        matches!(init_map(config), None);
+        matches!(init_map(config, false), None);
     }
 }
