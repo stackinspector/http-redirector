@@ -164,6 +164,7 @@ pub struct Context {
     update_key: Option<String>,
     http_client: OnceLock<HttpClient>,
     allow_update: bool,
+    return_value: bool,
 }
 
 impl Context {
@@ -173,6 +174,7 @@ impl Context {
         req_id_header: Option<String>,
         update_key: Option<String>,
         allow_update: bool,
+        return_value: bool,
     ) -> anyhow::Result<(Arc<Context>, LogCloser)> {
         let update_key_ref = update_key.as_deref().unwrap_or(UPDATE_PATH_STR);
         let http_client = OnceLock::new();
@@ -212,29 +214,56 @@ impl Context {
             update_key,
             http_client,
             allow_update,
+            return_value,
         }), LogCloser {
             handle: log_sender
         }))
     }
 
+    async fn update(&self, scope: &str) -> UpdateResult {
+        let mut state_ref = self.state_ref.write().await;
+        let Some(scope_ref) = state_ref.get_mut(scope) else {
+            return UpdateResult::ScopeNotFound;
+        };
+        let config = match get(&self.http_client, &scope_ref.url).await {
+            Err(error) => return UpdateResult::GetConfigError(error.to_string()),
+            Ok(config) => config,
+        };
+        let Some(map) = init_map(config.as_str()) else {
+            return UpdateResult::ParseConfigError;
+        };
+        // TODO serialize before insert
+        let new = Scope {
+            url: scope_ref.url.clone(),
+            map,
+        };
+        let old = core::mem::replace(scope_ref, new.clone());
+        UpdateResult::Succeed { new, old }
+    }
+
     pub async fn handle(self: Arc<Self>, remote_addr: SocketAddr, req: Request<Body>) -> Result<Response<Body>, Infallible> {
         // TODO if Err is not ! then empty response??
-        let Context { state_ref, log_sender, req_id_header, update_key, http_client, allow_update } = self.as_ref();
         let resp = Response::builder();
 
-        macro_rules! err {
+        macro_rules! reject {
             ($status:tt) => {
                 return Ok(resp.status(StatusCode::$status).body(Body::empty()).unwrap())
             };
         }
 
+        macro_rules! json {
+            ($status:expr, $json:expr) => {
+                resp.status($status).header(header::CONTENT_TYPE, "application/json; charset=utf-8").body(Body::from(serde_json::to_string(&$json).unwrap())).unwrap()
+            };
+        }
+
         if req.method() != Method::GET {
-            err!(METHOD_NOT_ALLOWED);
+            reject!(METHOD_NOT_ALLOWED);
         }
 
         // TODO: record not matched request?
         let Some((scope, key)) = split_kv(req.uri().path().split('/').skip(1).take(2)) else {
-            err!(NOT_FOUND);
+            reject!(NOT_FOUND);
         };
 
         macro_rules! header {
@@ -242,7 +271,7 @@ impl Context {
                 match req.headers().get($key) {
                     Some(v) => match v.to_str() {
                         Ok(v) => Some(v),
-                        Err(_) => err!(BAD_REQUEST),
+                        Err(_) => reject!(BAD_REQUEST),
                     },
                     None => None,
                 }
@@ -251,7 +280,7 @@ impl Context {
 
         let xff = header!("X-Forwarded-For");
         let ua = header!("User-Agent");
-        let req_id = match req_id_header {
+        let req_id = match &self.req_id_header {
             Some(k) => header!(k),
             None => None,
         };
@@ -264,42 +293,19 @@ impl Context {
             }
         };
         from.push(Cow::Owned(remote_addr.to_string()));
-        let (resp, event) = if *allow_update && (scope == update_key.as_deref().unwrap_or(UPDATE_PATH_STR)) {
-            let mut state_ref = state_ref.write().await;
+        let (resp, event) = if self.allow_update && (scope == self.update_key.as_deref().unwrap_or(UPDATE_PATH_STR)) {
             let scope = key;
-            let result = match state_ref.get_mut(scope) {
-                None => UpdateResult::ScopeNotFound,
-                Some(scope_state) => {
-                    match get(http_client, &scope_state.url).await {
-                        Err(error) => UpdateResult::GetConfigError(error.to_string()),
-                        Ok(config) => {
-                            match init_map(config.as_str()) {
-                                None => UpdateResult::ParseConfigError,
-                                Some(map) => {
-                                    // TODO serialize before insert
-                                    let new = Scope {
-                                        url: scope_state.url.clone(),
-                                        map,
-                                    };
-                                    let old = core::mem::replace(scope_state, new.clone());
-                                    UpdateResult::Succeed { new, old }
-                                },
-                            }
-                        },
-                    }
-                },
-            };
+            let result = self.update(scope).await;
             let resp_status = match result {
                 UpdateResult::Succeed { .. } => 200,
                 UpdateResult::ScopeNotFound => 404,
                 _ => 500,
             };
-            let resp_body = Body::from(serde_json::to_string(&result).unwrap());
-            let resp = resp.status(resp_status).header(header::CONTENT_TYPE, "application/json; charset=utf-8").body(resp_body).unwrap();
+            let resp = json!(resp_status, result);
             let event = RequestEvent::Update { result };
             (resp, event)
         } else {
-            let state_ref = state_ref.read().await;
+            let state_ref = self.state_ref.read().await;
             let scope_ref = state_ref.get(scope);
             let result = scope_ref.as_deref().and_then(|scope_ref| scope_ref.map.get(key));
             let hit = result.is_some();
@@ -311,7 +317,7 @@ impl Context {
             (resp, event)
         };
         let event = Event { time, event: InnerEvent::Request { from, req_id, scope, key, ua, inner: event } };
-        log_sender.request(serde_json::to_string(&event).unwrap()).await.unwrap(); // ok?
+        self.log_sender.request(serde_json::to_string(&event).unwrap()).await.unwrap(); // ok?
         Ok(resp)
     }
 }
